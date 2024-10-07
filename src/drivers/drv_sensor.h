@@ -248,6 +248,8 @@
 #define DRV_DIFF_PRESS_DEVTYPE_AUAV	0xE6
 #define DRV_BARO_DEVTYPE_AUAV		0xE7
 
+#define DRV_INS_DEVTYPE_MS 0xE8
+
 #define DRV_DEVTYPE_UNUSED		0xff
 
 #endif /* _DRV_SENSOR_H */
