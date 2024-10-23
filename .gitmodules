@@ -87,3 +87,7 @@
 	path = src/drivers/actuators/vertiq_io/iq-module-communication-cpp
 	url = https://github.com/PX4/iq-module-communication-cpp.git
 	branch = master
+[submodule "src/drivers/ins/microstrain/mip_sdk"]
+	path = src/drivers/ins/microstrain/mip_sdk
+	url = https://github.com/LORD-MicroStrain/mip_sdk.git
+	branch = feature/px4_compilation
