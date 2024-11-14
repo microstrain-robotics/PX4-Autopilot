@@ -13,7 +13,7 @@ parameters:
                     The max limit should be divisible by the rate
                     Restart required
             type: int32
-            default: 500
+            default: 250
 
         MS_MAG_RATE_HZ:
             description:
@@ -36,3 +36,52 @@ parameters:
                     Restart required
             type: int32
             default: 50
+
+        MS_FILTER_RATE1:
+            description:
+                short: Filter Rate
+                long: |
+                    Placeholder
+            type: int32
+            default: 250
+
+        MS_FILTER_RATE2:
+            description:
+                short: Filter Rate
+                long: |
+                    Placeholder
+            type: int32
+            default: 50
+
+        MS_FILTER_RATE3:
+            description:
+                short: Filter Rate
+                long: |
+                    Placeholder
+            type: int32
+            default: 5
+
+        CV7_ALIGNMENT:
+            description:
+                short: Alignment type
+                long: |
+                    Select the source of alignment. 0 = Magnetic 1 = Kinematic, 2 = External, 3 = Dual Antenna
+            type: int32
+            default: 1
+
+        CV7_INT_MAG_EN:
+            description:
+                short: Enable internal mag in CV7 filter
+                long: |
+                    Select the source of alignment. 0 = Disabled 1 = Enabled
+            type: int32
+            default: 0
+
+        MS_MODE:
+            description:
+                short: Toggles using the device as the primary EKF
+                long: |
+                    Setting to 1 will stop the onboard EKF2
+                    and vehicle topics will be published using data from MicroStrain EKF
+            type: int32
+            default: 1

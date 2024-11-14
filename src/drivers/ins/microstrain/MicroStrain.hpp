@@ -52,7 +52,19 @@
 #include <uORB/topics/sensor_gyro.h>
 #include <uORB/topics/sensor_baro.h>
 
+#include <uORB/topics/sensor_gps.h>
+#include <uORB/topics/sensor_selection.h>
+#include <uORB/topics/vehicle_global_position.h>
+#include <uORB/topics/vehicle_local_position.h>
+#include <uORB/topics/vehicle_angular_velocity.h>
+#include <uORB/topics/vehicle_attitude.h>
+#include <uORB/topics/vehicle_odometry.h>
+#include <uORB/topics/debug_array.h>
+#include <uORB/topics/estimator_status.h>
+
+
 #include "mip_sdk/src/mip/mip_all.h"
+#include "mip_sdk/src/mip/definitions/commands_aiding.h"
 
 #include "modal_io_serial.hpp"
 
@@ -83,6 +95,8 @@ public:
 	// Sensor Callbacks
 	static void sensorCallback(void *user, const mip_packet *packet, mip::Timestamp timestamp);
 
+	static void filterCallback(void *user, const mip_packet *packet, mip::Timestamp timestamp);
+
 
 private:
 	/** @see ModuleBase */
@@ -101,10 +115,14 @@ private:
 
 	mip_cmd_result configureImuMessageFormat();
 
+	mip_cmd_result configureFilterMessageFormat();
+
 	mip_cmd_result writeMessageFormat(uint8_t descriptor_set, uint8_t num_descriptors,
 					  const mip::DescriptorRate *descriptors);
 
 	int connectAtBaud(int32_t baud);
+
+	void service_cv7();
 
 	mip::CmdResult forceIdle();
 
@@ -125,6 +143,7 @@ private:
 
 	// Subscriptions
 	uORB::SubscriptionInterval _parameter_update_sub{ORB_ID(parameter_update), 1_s}; // subscription limited to 1 Hz updates
+	uORB::Subscription                 _sensor_gps_sub{ORB_ID(sensor_gps)};
 
 	// Performance (perf) counters
 	perf_counter_t	_loop_perf{perf_alloc(PC_ELAPSED, MODULE_NAME": cycle")};
@@ -133,16 +152,31 @@ private:
 	uint8_t _parse_buffer[2048];
 	bool _is_initialized{false};
 	int _ms_schedule_rate_us{0};
+	bool _ms_mode{false};
 
 	uint16_t _supported_descriptors[1024] = {0};
 	uint16_t _supported_desc_len = 0;
 	uint16_t _supported_descriptor_sets[1024] = {0};
 	uint16_t _supported_desc_set_len = 0;
 
+	uORB::Publication<vehicle_local_position_s> _vehicle_local_position_pub{ORB_ID(vehicle_local_position)};
+	uORB::Publication<vehicle_angular_velocity_s> _vehicle_angular_velocity_pub{ORB_ID(vehicle_angular_velocity)};
+	uORB::Publication<vehicle_attitude_s> _vehicle_attitude_pub{ORB_ID(vehicle_attitude)};
+	uORB::Publication<vehicle_global_position_s> _global_position_pub{ORB_ID(vehicle_global_position)};
+	uORB::Publication<vehicle_odometry_s> _vehicle_odometry_pub{ORB_ID(vehicle_odometry)};
+	uORB::Publication<debug_array_s> _debug_array_pub{ORB_ID(debug_array)};
+
+	// Needed for health checks
+	uORB::Publication<estimator_status_s> _estimator_status_pub{ORB_ID(estimator_status)};
+
+	// Must publish to prevent sensor stale failure (sensors module)
+	uORB::Publication<sensor_selection_s> _sensor_selection_pub{ORB_ID(sensor_selection)};
+
 	mip::C::mip_interface _device;
 
 	// Handlers
 	mip_dispatch_handler _sensor_data_handler;
+	mip_dispatch_handler _filter_data_handler;
 
 	char _port[128];
 
@@ -150,7 +184,13 @@ private:
 	DEFINE_PARAMETERS(
 		(ParamInt<px4::params::MS_IMU_RATE_HZ>) _param_ms_imu_rate_hz,
 		(ParamInt<px4::params::MS_MAG_RATE_HZ>) _param_ms_mag_rate_hz,
-		(ParamInt<px4::params::MS_BARO_RATE_HZ>) _param_ms_baro_rate_hz
+		(ParamInt<px4::params::MS_BARO_RATE_HZ>) _param_ms_baro_rate_hz,
+		(ParamInt<px4::params::MS_FILTER_RATE1>) _param_ms_filter_rate3_hz,
+		(ParamInt<px4::params::MS_FILTER_RATE2>) _param_ms_filter_rate2_hz,
+		(ParamInt<px4::params::MS_FILTER_RATE3>) _param_ms_filter_rate1_hz,
+		(ParamInt<px4::params::CV7_ALIGNMENT>) _param_cv7_alignment,
+		(ParamInt<px4::params::CV7_INT_MAG_EN>) _param_cv7_int_mag_en,
+		(ParamInt<px4::params::MS_MODE>) _param_ms_mode
 	)
 
 };
