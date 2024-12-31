@@ -13,7 +13,7 @@ parameters:
                     The max limit should be divisible by the rate
                     Restart required
             type: int32
-            default: 250
+            default: 500
 
         MS_MAG_RATE_HZ:
             description:
@@ -37,7 +37,7 @@ parameters:
             type: int32
             default: 50
 
-        MS_FILTER_RATE1:
+        MS_EKF_HRATE_HZ:
             description:
                 short: Filter Rate
                 long: |
@@ -45,21 +45,13 @@ parameters:
             type: int32
             default: 250
 
-        MS_FILTER_RATE2:
+        MS_EKF_LRATE_HZ:
             description:
                 short: Filter Rate
                 long: |
                     Placeholder
             type: int32
             default: 50
-
-        MS_FILTER_RATE3:
-            description:
-                short: Filter Rate
-                long: |
-                    Placeholder
-            type: int32
-            default: 5
 
         CV7_ALIGNMENT:
             description:
@@ -83,5 +75,13 @@ parameters:
                 long: |
                     Setting to 1 will stop the onboard EKF2
                     and vehicle topics will be published using data from MicroStrain EKF
+            type: int32
+            default: 1
+
+        AIDING_EN:
+            description:
+                short: Enables Aiding Measurements to the Sensor
+                long: |
+                    Placeholder
             type: int32
             default: 1

@@ -97,6 +97,8 @@ public:
 
 	static void filterCallback(void *user, const mip_packet *packet, mip::Timestamp timestamp);
 
+	static constexpr float sq(float x) { return x * x; };
+
 
 private:
 	/** @see ModuleBase */
@@ -122,11 +124,15 @@ private:
 
 	int connectAtBaud(int32_t baud);
 
-	void service_cv7();
+	void sendAidingMeasurements();
 
 	mip::CmdResult forceIdle();
 
 	mip_cmd_result writeBaudRate(uint32_t baudrate, uint8_t port);
+
+	mip_cmd_result configureAidingSources();
+
+	mip_cmd_result writeFilterInitConfig();
 
 	bool init();
 
@@ -153,6 +159,24 @@ private:
 	bool _is_initialized{false};
 	int _ms_schedule_rate_us{0};
 	bool _ms_mode{false};
+
+	int _debug_count = 0;
+
+	template <typename T>
+	struct sensorSample {
+		T sample;
+		bool updated = false;
+	};
+
+	double _geoid_height = 0;
+	double _ref_pos[3] = {0};
+	double _ref_alt_msl = 0;
+	double _ref_pos_ts = 0;
+	double _gps_origin_ep[2] = {0};
+
+	float gnss_antenna_offset1[3] = { 0.0F, 0.0F, 0.0F }; // Should this be a param
+	float gnss_antenna_offset2[3] = { 0.0F, 0.0F, 0.0F};
+	mip_aiding_frame_config_command_rotation rotation{0.0F, 0.0F, 0.0F};
 
 	uint16_t _supported_descriptors[1024] = {0};
 	uint16_t _supported_desc_len = 0;
@@ -185,12 +209,13 @@ private:
 		(ParamInt<px4::params::MS_IMU_RATE_HZ>) _param_ms_imu_rate_hz,
 		(ParamInt<px4::params::MS_MAG_RATE_HZ>) _param_ms_mag_rate_hz,
 		(ParamInt<px4::params::MS_BARO_RATE_HZ>) _param_ms_baro_rate_hz,
-		(ParamInt<px4::params::MS_FILTER_RATE1>) _param_ms_filter_rate3_hz,
-		(ParamInt<px4::params::MS_FILTER_RATE2>) _param_ms_filter_rate2_hz,
-		(ParamInt<px4::params::MS_FILTER_RATE3>) _param_ms_filter_rate1_hz,
+		(ParamInt<px4::params::MS_EKF_HRATE_HZ>) _param_ms_filter_rate_high_hz,
+		(ParamInt<px4::params::MS_EKF_LRATE_HZ>) _param_ms_filter_rate_low_hz,
 		(ParamInt<px4::params::CV7_ALIGNMENT>) _param_cv7_alignment,
 		(ParamInt<px4::params::CV7_INT_MAG_EN>) _param_cv7_int_mag_en,
-		(ParamInt<px4::params::MS_MODE>) _param_ms_mode
+		(ParamInt<px4::params::MS_MODE>) _param_ms_mode,
+		(ParamInt<px4::params::AIDING_EN>) _param_aiding_en
 	)
+
 
 };

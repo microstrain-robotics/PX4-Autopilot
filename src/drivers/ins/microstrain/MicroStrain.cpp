@@ -39,7 +39,7 @@ ModalIoSerial device_uart;
 
 MicroStrain::MicroStrain(const char *uart_port) :
 	ModuleParams(nullptr),
-	ScheduledWorkItem(MODULE_NAME, px4::wq_configurations::test1)
+	ScheduledWorkItem(MODULE_NAME, px4::wq_configurations::INS3)
 {
 	// Store port name
 	memset(_port, '\0', sizeof(_port));
@@ -71,24 +71,39 @@ MicroStrain::MicroStrain(const char *uart_port) :
 	_sensor_baro.temperature = 0;
 	_sensor_baro.error_count = 0;
 
+	// Check to see if we want to use external filter data
 	_ms_mode = _param_ms_mode.get();
 
-	// MS_MODE 1 full INS
-	// if (_ms_mode == 1) {
-	// 	int32_t m = 0;
+	// Disables EKF2 to use the INS
+	if (_ms_mode == 1) {
 
-	// 	// EKF2_EN 0 (disabled)
-	// 	m = 0;
-	// 	param_set(param_find("EKF2_EN"), &m);
+		int32_t m = 0;
 
-	// 	// SENS_IMU_MODE (VN handles sensor selection)
-	// 	m = 0;
-	// 	param_set(param_find("SENS_IMU_MODE"), &m);
+		// Disables EKF2
+		m = 0;
+		param_set(param_find("EKF2_EN"), &m);
 
-	// 	// SENS_MAG_MODE (VN handles sensor selection)
-	// 	m = 0;
-	// 	param_set(param_find("SENS_MAG_MODE"), &m);
-	// }
+		m = 0;
+		param_set(param_find("SENS_IMU_MODE"), &m);
+
+		m = 0;
+		param_set(param_find("SENS_MAG_MODE"), &m);
+	}
+
+	else {
+		int32_t m = 0;
+
+		// Enables EKF2
+		m = 1;
+		param_set(param_find("EKF2_EN"), &m);
+
+		m = 1;
+		param_set(param_find("SENS_IMU_MODE"), &m);
+
+		m = 1;
+		param_set(param_find("SENS_MAG_MODE"), &m);
+	}
+
 }
 
 MicroStrain::~MicroStrain()
@@ -99,6 +114,14 @@ MicroStrain::~MicroStrain()
 
 	PX4_DEBUG("Destructor");
 	_sensor_baro_pub.unadvertise();
+	_sensor_selection_pub.unadvertise();
+	_vehicle_local_position_pub.unadvertise();
+	_vehicle_angular_velocity_pub.unadvertise();
+	_vehicle_attitude_pub.unadvertise();
+	_global_position_pub.unadvertise();
+	_vehicle_odometry_pub.unadvertise();
+	_debug_array_pub.unadvertise();
+	_estimator_status_pub.unadvertise();
 
 	perf_free(_loop_perf);
 	perf_free(_loop_interval_perf);
@@ -378,66 +401,60 @@ mip_cmd_result MicroStrain::configureFilterMessageFormat()
 	}
 
 	// Configure the Message Format depending on if the device supports the descriptor
-	uint16_t filter_decimation1 = base_rate / (uint16_t)_param_ms_filter_rate1_hz.get();
-	uint16_t filter_decimation2 = base_rate / (uint16_t)_param_ms_filter_rate2_hz.get();
-	uint16_t filter_decimation3 = base_rate / (uint16_t)_param_ms_filter_rate3_hz.get();
+	uint16_t filter_decimation_high = base_rate / (uint16_t)_param_ms_filter_rate_high_hz.get();
+	uint16_t filter_decimation_low = base_rate / (uint16_t)_param_ms_filter_rate_low_hz.get();
 
 	if (supportsDescriptor(MIP_FILTER_DATA_DESC_SET, MIP_DATA_DESC_FILTER_POS_LLH)
-	    && _param_ms_filter_rate1_hz.get() > 0) {
-		filter_descriptors[num_filter_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_FILTER_POS_LLH, filter_decimation1};
+	    && _param_ms_filter_rate_high_hz.get() > 0) {
+		filter_descriptors[num_filter_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_FILTER_POS_LLH, filter_decimation_high};
 	}
 
 	if (supportsDescriptor(MIP_FILTER_DATA_DESC_SET, MIP_DATA_DESC_FILTER_ATT_QUATERNION)
-	    && _param_ms_filter_rate1_hz.get() > 0) {
-		filter_descriptors[num_filter_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_FILTER_ATT_QUATERNION, filter_decimation1};
+	    && _param_ms_filter_rate_high_hz.get() > 0) {
+		filter_descriptors[num_filter_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_FILTER_ATT_QUATERNION, filter_decimation_high};
 	}
 
 	if (supportsDescriptor(MIP_FILTER_DATA_DESC_SET, MIP_DATA_DESC_FILTER_VEL_NED)
-	    && _param_ms_filter_rate1_hz.get() > 0) {
-		filter_descriptors[num_filter_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_FILTER_VEL_NED, filter_decimation1};
+	    && _param_ms_filter_rate_high_hz.get() > 0) {
+		filter_descriptors[num_filter_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_FILTER_VEL_NED, filter_decimation_high};
 	}
 
 	if (supportsDescriptor(MIP_FILTER_DATA_DESC_SET, MIP_DATA_DESC_FILTER_REL_POS_NED)
-	    && _param_ms_filter_rate1_hz.get() > 0) {
-		filter_descriptors[num_filter_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_FILTER_REL_POS_NED, filter_decimation1};
+	    && _param_ms_filter_rate_high_hz.get() > 0) {
+		filter_descriptors[num_filter_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_FILTER_REL_POS_NED, filter_decimation_high};
 	}
 
 	if (supportsDescriptor(MIP_FILTER_DATA_DESC_SET, MIP_DATA_DESC_FILTER_LINEAR_ACCELERATION)
-	    && _param_ms_filter_rate2_hz.get() > 0) {
-		filter_descriptors[num_filter_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_FILTER_LINEAR_ACCELERATION, filter_decimation2};
+	    && _param_ms_filter_rate_high_hz.get() > 0) {
+		filter_descriptors[num_filter_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_FILTER_LINEAR_ACCELERATION, filter_decimation_high};
 	}
 
 	if (supportsDescriptor(MIP_FILTER_DATA_DESC_SET, MIP_DATA_DESC_FILTER_POS_UNCERTAINTY)
-	    && _param_ms_filter_rate1_hz.get() > 0) {
-		filter_descriptors[num_filter_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_FILTER_POS_UNCERTAINTY, filter_decimation1};
+	    && _param_ms_filter_rate_high_hz.get() > 0) {
+		filter_descriptors[num_filter_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_FILTER_POS_UNCERTAINTY, filter_decimation_high};
 	}
 
 	if (supportsDescriptor(MIP_FILTER_DATA_DESC_SET, MIP_DATA_DESC_FILTER_VEL_UNCERTAINTY)
-	    && _param_ms_filter_rate1_hz.get() > 0) {
-		filter_descriptors[num_filter_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_FILTER_VEL_UNCERTAINTY, filter_decimation1};
+	    && _param_ms_filter_rate_high_hz.get() > 0) {
+		filter_descriptors[num_filter_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_FILTER_VEL_UNCERTAINTY, filter_decimation_high};
 	}
 
 	if (supportsDescriptor(MIP_FILTER_DATA_DESC_SET, MIP_DATA_DESC_FILTER_ATT_UNCERTAINTY_EULER)
-	    && _param_ms_filter_rate1_hz.get() > 0) {
-		filter_descriptors[num_filter_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_FILTER_ATT_UNCERTAINTY_EULER, filter_decimation1};
+	    && _param_ms_filter_rate_high_hz.get() > 0) {
+		filter_descriptors[num_filter_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_FILTER_ATT_UNCERTAINTY_EULER, filter_decimation_high};
 	}
 
 	if (supportsDescriptor(MIP_FILTER_DATA_DESC_SET, MIP_DATA_DESC_FILTER_COMPENSATED_ANGULAR_RATE)
-	    && _param_ms_filter_rate3_hz.get() > 0) {
-		filter_descriptors[num_filter_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_FILTER_COMPENSATED_ANGULAR_RATE, filter_decimation3};
+	    && _param_ms_filter_rate_low_hz.get() > 0) {
+		filter_descriptors[num_filter_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_FILTER_COMPENSATED_ANGULAR_RATE, filter_decimation_low};
 	}
 
 	if (supportsDescriptor(MIP_FILTER_DATA_DESC_SET, MIP_DATA_DESC_FILTER_FILTER_STATUS)
-	    && _param_ms_filter_rate3_hz.get() > 0) {
-		filter_descriptors[num_filter_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_FILTER_FILTER_STATUS, filter_decimation3};
+	    && _param_ms_filter_rate_low_hz.get() > 0) {
+		filter_descriptors[num_filter_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_FILTER_FILTER_STATUS, filter_decimation_low};
 	}
 
-	if (supportsDescriptor(MIP_FILTER_DATA_DESC_SET, MIP_DATA_DESC_FILTER_AID_MEAS_SUMMARY)
-	    && _param_ms_filter_rate3_hz.get() > 0) {
-		filter_descriptors[num_filter_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_FILTER_AID_MEAS_SUMMARY, filter_decimation3};
-	}
-
-	PX4_INFO("Hi: %d, %d, %d, %d, %d", num_filter_descriptors, filter_decimation1, filter_decimation2, filter_decimation3,
+	PX4_INFO("Hi: %d, %d, %d, %d", num_filter_descriptors, filter_decimation_high, filter_decimation_low,
 		 sizeof(filter_descriptors));
 
 	// Write the settings
@@ -457,6 +474,87 @@ mip_cmd_result MicroStrain::writeBaudRate(uint32_t baudrate, uint8_t port)
 
 	return mip_3dm_write_uart_baudrate(&_device, baudrate);
 
+}
+
+mip_cmd_result MicroStrain::configureAidingSources()
+{
+
+	mip_cmd_result res;
+
+	// Selectively turn on the mag aiding source
+	if (_param_cv7_int_mag_en.get() == 1) {
+		res = mip_filter_write_aiding_measurement_enable(&_device,
+				MIP_FILTER_AIDING_MEASUREMENT_ENABLE_COMMAND_AIDING_SOURCE_MAGNETOMETER, true);
+	}
+
+	else {
+		res = mip_filter_write_aiding_measurement_enable(&_device,
+				MIP_FILTER_AIDING_MEASUREMENT_ENABLE_COMMAND_AIDING_SOURCE_MAGNETOMETER, false);
+	}
+
+	if (res != MIP_ACK_OK) {
+		return res;
+	}
+
+	// Enables GNSS Position & Velocity as an aiding measurement
+	res = mip_filter_write_aiding_measurement_enable(&_device,
+			MIP_FILTER_AIDING_MEASUREMENT_ENABLE_COMMAND_AIDING_SOURCE_GNSS_POS_VEL, true);
+
+	if (res != MIP_ACK_OK) {
+		return res;
+	}
+
+	// Sets up multi antenna offsets for the GNSS/INS if its supported
+	//if (supportsDescriptorSet(MIP_GNSS1_DATA_DESC_SET)) {
+	if (supportsDescriptor(MIP_FILTER_CMD_DESC_SET, MIP_CMD_DESC_FILTER_MULTI_ANTENNA_OFFSET)) {
+		PX4_INFO("GQ7");
+		mip_cmd_result res1 = mip_filter_write_multi_antenna_offset(&_device, 2, gnss_antenna_offset1);
+		mip_cmd_result res2 = mip_filter_write_multi_antenna_offset(&_device, 3, gnss_antenna_offset2);
+
+		if (res1 != MIP_ACK_OK) {
+			return res1;
+
+		} else if (res2 != MIP_ACK_OK) {
+			return res2;
+		}
+
+		// Enables heading as an aiding measurement
+		return mip_filter_write_aiding_measurement_enable(&_device,
+				MIP_FILTER_AIDING_MEASUREMENT_ENABLE_COMMAND_AIDING_SOURCE_GNSS_HEADING, true);
+
+	}
+
+	PX4_INFO("CV7");
+	// Otherwise sets up the aiding frame for the INS
+	return mip_aiding_write_frame_config(&_device, 2, MIP_AIDING_FRAME_CONFIG_COMMAND_FORMAT_EULER, false,
+					     gnss_antenna_offset1, &rotation);
+
+}
+
+mip_cmd_result MicroStrain::writeFilterInitConfig()
+{
+	float filter_init_pos[3] = {0};
+	float filter_init_vel[3] = {0};
+	uint8_t initial_alignment = MIP_FILTER_INITIALIZATION_CONFIGURATION_COMMAND_ALIGNMENT_SELECTOR_MAGNETOMETER;
+
+	if (_param_cv7_alignment.get() == 1) {
+		initial_alignment = MIP_FILTER_INITIALIZATION_CONFIGURATION_COMMAND_ALIGNMENT_SELECTOR_KINEMATIC;
+	}
+
+	if (_param_cv7_alignment.get() == 2) {
+		initial_alignment = MIP_FILTER_INITIALIZATION_CONFIGURATION_COMMAND_ALIGNMENT_SELECTOR_EXTERNAL;
+	}
+
+	if (_param_cv7_alignment.get() == 3) {
+		initial_alignment = MIP_FILTER_INITIALIZATION_CONFIGURATION_COMMAND_ALIGNMENT_SELECTOR_DUAL_ANTENNA;
+
+	}
+
+	// Filter initialization configuration
+	return mip_filter_write_initialization_configuration(&_device, 0,
+			MIP_FILTER_INITIALIZATION_CONFIGURATION_COMMAND_INITIAL_CONDITION_SOURCE_AUTO_POS_VEL_ATT,
+			initial_alignment,
+			0.0, 0.0, 0.0, filter_init_pos, filter_init_vel, MIP_FILTER_REFERENCE_FRAME_LLH);
 }
 
 bool MicroStrain::initializeIns()
@@ -479,6 +577,12 @@ bool MicroStrain::initializeIns()
 		return false;
 	}
 
+	// Get the supported descriptors for the device in use
+	if (getSupportedDescriptors() != MIP_ACK_OK) {
+		PX4_INFO("ERROR: Could not get descriptors");
+		return false;
+	}
+
 	// Setting the device baudrate to the desired value
 	PX4_INFO("Setting the baud to desired baud rate");
 
@@ -495,12 +599,6 @@ bool MicroStrain::initializeIns()
 		return false;
 	}
 
-	// Get the supported descriptors for the device in use
-	if (getSupportedDescriptors() != MIP_ACK_OK) {
-		PX4_INFO("ERROR: Could not get descriptors");
-		return false;
-	}
-
 	// Configure the IMU message formt based on what descriptors are supported
 	if (configureImuMessageFormat() != MIP_ACK_OK) {
 		PX4_INFO("ERROR: Could not write message format");
@@ -514,17 +612,13 @@ bool MicroStrain::initializeIns()
 
 	if (_ms_mode == 1) {
 
-		mip_aiding_frame_config_command_rotation rotation{0};
-		uint8_t gnss_antenna_sensor_id = 2;
-
-		for (uint8_t i = 0; i < 3; i++) {
-			rotation.euler[i] = 0.0;
+		// Configure the aiding sources based on what the sensor supports
+		if (configureAidingSources() != MIP_ACK_OK) {
+			PX4_ERR("ERROR: Could not configure aiding frames!");
+			return false;
 		}
 
-		float translation[3] = { 0.0F, 0.0F, 0.0F };
-		mip_aiding_write_frame_config(&_device, gnss_antenna_sensor_id, MIP_AIDING_FRAME_CONFIG_COMMAND_FORMAT_EULER, false,
-					      translation, &rotation);
-
+		// Configure the IMU message format based on what descriptors are supported
 		if (configureFilterMessageFormat() != MIP_ACK_OK) {
 			PX4_INFO("ERROR: Could not write message format");
 			return false;
@@ -535,71 +629,49 @@ bool MicroStrain::initializeIns()
 						       &filterCallback,
 						       this);
 
-		// Selectively turn on the mag aiding source
-		if (_param_cv7_int_mag_en.get() == 1) {
-			if (mip_filter_write_aiding_measurement_enable(&_device,
-					MIP_FILTER_AIDING_MEASUREMENT_ENABLE_COMMAND_AIDING_SOURCE_MAGNETOMETER, true) != MIP_ACK_OK) {
-				PX4_ERR("ERROR: Could not set filter aiding measurement enable!");
-			}
-		}
-
-		else {
-			if (mip_filter_write_aiding_measurement_enable(&_device,
-					MIP_FILTER_AIDING_MEASUREMENT_ENABLE_COMMAND_AIDING_SOURCE_MAGNETOMETER, false) == MIP_ACK_OK) {
-				PX4_INFO("Mag Disabled");
-			}
-		}
-
-		if (mip_filter_write_aiding_measurement_enable(&_device,
-				MIP_FILTER_AIDING_MEASUREMENT_ENABLE_COMMAND_AIDING_SOURCE_GNSS_POS_VEL, true) != MIP_ACK_OK) {
-			PX4_ERR("ERROR: Could not set filter aiding measurement enable!");
-		}
-
 		// Reset the filter, then set the initial conditions
 		if (mip_filter_reset(&_device) != MIP_ACK_OK) {
 			PX4_ERR("ERROR: Could not reset the filter!");
+			return false;
 		}
 
+		usleep(1);
 
-		float filter_init_pos[3] = {0};
-		float filter_init_vel[3] = {0};
-		uint8_t initial_alignment = MIP_FILTER_INITIALIZATION_CONFIGURATION_COMMAND_ALIGNMENT_SELECTOR_MAGNETOMETER;
-
-		if (_param_cv7_alignment.get() == 1) {
-			initial_alignment = MIP_FILTER_INITIALIZATION_CONFIGURATION_COMMAND_ALIGNMENT_SELECTOR_KINEMATIC;
+		// Initialize the filter
+		if (writeFilterInitConfig() != MIP_ACK_OK) {
+			PX4_ERR("ERROR: Could not configure filter initialization!");
+			return false;
 		}
 
-		if (_param_cv7_alignment.get() == 2) {
-			initial_alignment = MIP_FILTER_INITIALIZATION_CONFIGURATION_COMMAND_ALIGNMENT_SELECTOR_EXTERNAL;
-		}
-
-		if (_param_cv7_alignment.get() == 3) {
-			initial_alignment = MIP_FILTER_INITIALIZATION_CONFIGURATION_COMMAND_ALIGNMENT_SELECTOR_DUAL_ANTENNA;
-		}
-
-		// Config for Position, Velocity and Attitude, use kinematic alignment for initialization
-		if (mip_filter_write_initialization_configuration(&_device, 0,
-				MIP_FILTER_INITIALIZATION_CONFIGURATION_COMMAND_INITIAL_CONDITION_SOURCE_AUTO_POS_VEL_ATT,
-				initial_alignment,
-				0.0, 0.0, 0.0, filter_init_pos, filter_init_vel, MIP_FILTER_REFERENCE_FRAME_LLH) != MIP_ACK_OK) {
-			PX4_ERR("ERROR: Could not set filter initialization configuration!");
-		}
-
-
-		//
 		// Setup the rotation based on PX4 standard rotation sets
-		//
-
-		if (mip_3dm_write_sensor_2_vehicle_transform_euler(&_device, 0, 0, 0) != MIP_ACK_OK) {
+		if (mip_3dm_write_sensor_2_vehicle_transform_euler(&_device, math::radians<float>(rotation.euler[0]),
+				math::radians<float>(rotation.euler[1]), math::radians<float>(rotation.euler[2])) != MIP_ACK_OK) {
 			PX4_ERR("ERROR: Could not set sensor-to-vehicle transformation!");
 			return false;
 		}
+
 	}
 
 	if (mip_3dm_write_datastream_control(&_device, MIP_3DM_DATASTREAM_CONTROL_COMMAND_ALL_STREAMS, true) != MIP_ACK_OK) {
 		PX4_ERR("ERROR: Could not enable the data stream");
 		return false;
 	}
+
+
+	// How to handle the case if initialized with no valid pos
+	sensor_gps_s gp{0};
+	_sensor_gps_sub.update(&gp);
+
+	_ref_pos[0] = gp.latitude_deg;
+	_ref_pos[1] = gp.longitude_deg;
+	_ref_pos[2] = gp.altitude_ellipsoid_m;
+	_ref_pos_ts = gp.timestamp_sample;
+	_ref_alt_msl = gp.altitude_msl_m;
+
+	_gps_origin_ep[0] = gp.eph;
+	_gps_origin_ep[1] = gp.epv;
+
+	mip_filter_write_rel_pos_configuration(&_device, 1, 2, _ref_pos);
 
 	// Resume the device
 	if (mip_base_resume(&_device) != MIP_ACK_OK) {
@@ -608,7 +680,6 @@ bool MicroStrain::initializeIns()
 	}
 
 	return true;
-
 }
 
 void MicroStrain::sensorCallback(void *user, const mip_packet *packet, mip::Timestamp timestamp)
@@ -617,15 +688,10 @@ void MicroStrain::sensorCallback(void *user, const mip_packet *packet, mip::Time
 
 	assert(mip_packet_descriptor_set(packet) == MIP_SENSOR_DATA_DESC_SET);
 
-	mip_sensor_scaled_accel_data accel;
-	mip_sensor_scaled_gyro_data gyro;
-	mip_sensor_scaled_mag_data mag;
-	mip_sensor_scaled_pressure_data baro;
-
-	bool accel_valid = false;
-	bool gyro_valid = false;
-	bool mag_valid = false;
-	bool baro_valid = false;
+	sensorSample<mip_sensor_scaled_accel_data> accel;
+	sensorSample<mip_sensor_scaled_gyro_data> gyro;
+	sensorSample<mip_sensor_scaled_mag_data> mag;
+	sensorSample<mip_sensor_scaled_pressure_data> baro;
 
 	// Iterate through the packet and extract based on the descriptor present
 	auto t = hrt_absolute_time();
@@ -634,26 +700,26 @@ void MicroStrain::sensorCallback(void *user, const mip_packet *packet, mip::Time
 		switch (mip_field_field_descriptor(&field)) {
 
 		case MIP_DATA_DESC_SENSOR_ACCEL_SCALED:
-			extract_mip_sensor_scaled_accel_data_from_field(&field, &accel);
-			accel_valid = true;
+			extract_mip_sensor_scaled_accel_data_from_field(&field, &accel.sample);
+			accel.updated = true;
 			break;
 
 
 		case MIP_DATA_DESC_SENSOR_GYRO_SCALED:
-			extract_mip_sensor_scaled_gyro_data_from_field(&field, &gyro);
-			gyro_valid = true;
+			extract_mip_sensor_scaled_gyro_data_from_field(&field, &gyro.sample);
+			gyro.updated = true;
 			break;
 
 
 		case MIP_DATA_DESC_SENSOR_MAG_SCALED:
-			extract_mip_sensor_scaled_mag_data_from_field(&field, &mag);
-			mag_valid = true;
+			extract_mip_sensor_scaled_mag_data_from_field(&field, &mag.sample);
+			mag.updated = true;
 			break;
 
 
 		case MIP_DATA_DESC_SENSOR_PRESSURE_SCALED:
-			extract_mip_sensor_scaled_pressure_data_from_field(&field, &baro);
-			baro_valid = true;
+			extract_mip_sensor_scaled_pressure_data_from_field(&field, &baro.sample);
+			baro.updated = true;
 			break;
 
 
@@ -665,29 +731,29 @@ void MicroStrain::sensorCallback(void *user, const mip_packet *packet, mip::Time
 	}
 
 	// Publish only if the corresponding data was extracted from the packet
-	if (accel_valid) {
-		ref->_px4_accel.update(t, accel.scaled_accel[0]*CONSTANTS_ONE_G,
-				       accel.scaled_accel[1]*CONSTANTS_ONE_G,
-				       accel.scaled_accel[2]*CONSTANTS_ONE_G);
+	if (accel.updated) {
+		ref->_px4_accel.update(t, accel.sample.scaled_accel[0]*CONSTANTS_ONE_G,
+				       accel.sample.scaled_accel[1]*CONSTANTS_ONE_G,
+				       accel.sample.scaled_accel[2]*CONSTANTS_ONE_G);
 
 	}
 
-	if (gyro_valid) {
-		ref->_px4_gyro.update(t, gyro.scaled_gyro[0],
-				      gyro.scaled_gyro[1],
-				      gyro.scaled_gyro[2]);
+	if (gyro.updated) {
+		ref->_px4_gyro.update(t, gyro.sample.scaled_gyro[0],
+				      gyro.sample.scaled_gyro[1],
+				      gyro.sample.scaled_gyro[2]);
 	}
 
-	if (mag_valid) {
-		ref->_px4_mag.update(t, mag.scaled_mag[0],
-				     mag.scaled_mag[1],
-				     mag.scaled_mag[2]);
+	if (mag.updated) {
+		ref->_px4_mag.update(t, mag.sample.scaled_mag[0],
+				     mag.sample.scaled_mag[1],
+				     mag.sample.scaled_mag[2]);
 	}
 
-	if (baro_valid) {
+	if (baro.updated) {
 		ref->_sensor_baro.timestamp = timestamp;
 		ref->_sensor_baro.timestamp_sample = t;
-		ref->_sensor_baro.pressure = baro.scaled_pressure * 100.f; // convert [Pa] to [mBar]
+		ref->_sensor_baro.pressure = baro.sample.scaled_pressure * 100.f; // convert [Pa] to [mBar]
 		ref->_sensor_baro_pub.publish(ref->_sensor_baro);
 
 	}
@@ -700,221 +766,351 @@ void MicroStrain::filterCallback(void *user, const mip_packet *packet, mip::Time
 
 	assert(mip_packet_descriptor_set(packet) == MIP_FILTER_DATA_DESC_SET);
 
-	mip_filter_position_llh_data pos_llh;
-	mip_filter_attitude_quaternion_data att_quat;
-	mip_filter_comp_angular_rate_data ang_rate;
-	mip_filter_rel_pos_ned_data rel_pos;
-	mip_filter_velocity_ned_data vel_ned;
-	mip_filter_status_data stat;
-	mip_filter_position_llh_uncertainty_data llh_uncert;
-	mip_filter_velocity_ned_uncertainty_data vel_uncert;
-	mip_filter_euler_angles_uncertainty_data att_euler_uncert;
-	mip_filter_linear_accel_data lin_accel;
-	mip_filter_aiding_measurement_summary_data aid_sum;
+	sensorSample<mip_filter_position_llh_data> pos_llh;
+	sensorSample<mip_filter_attitude_quaternion_data> att_quat;
+	sensorSample<mip_filter_comp_angular_rate_data> ang_rate;
+	sensorSample<mip_filter_rel_pos_ned_data> rel_pos;
+	sensorSample<mip_filter_velocity_ned_data> vel_ned;
+	sensorSample<mip_filter_status_data> stat;
+	sensorSample<mip_filter_position_llh_uncertainty_data> llh_uncert;
+	sensorSample<mip_filter_velocity_ned_uncertainty_data> vel_uncert;
+	sensorSample<mip_filter_euler_angles_uncertainty_data> att_euler_uncert;
+	sensorSample<mip_filter_linear_accel_data> lin_accel;
 
-	bool updated_data[11] = {false};
+	// Iterate through the packet and extract based on the descriptor present
 	auto t = hrt_absolute_time();
-	float yaw = NAN;
 
 	for (mip_field field = mip_field_first_from_packet(packet); mip_field_is_valid(&field); mip_field_next(&field)) {
 		switch (mip_field_field_descriptor(&field)) {
-		case MIP_DATA_DESC_FILTER_POS_LLH: extract_mip_filter_position_llh_data_from_field(&field, &pos_llh);
-			updated_data[0] = true; break;
+		case MIP_DATA_DESC_FILTER_POS_LLH:
+			extract_mip_filter_position_llh_data_from_field(&field, &pos_llh.sample);
+			pos_llh.updated = true;
+			break;
 
-		case MIP_DATA_DESC_FILTER_ATT_QUATERNION: extract_mip_filter_attitude_quaternion_data_from_field(&field, &att_quat);
-			updated_data[1] = true; break;
+		case MIP_DATA_DESC_FILTER_ATT_QUATERNION:
+			extract_mip_filter_attitude_quaternion_data_from_field(&field, &att_quat.sample);
+			att_quat.updated = true;
+			break;
 
-		case MIP_DATA_DESC_FILTER_VEL_NED: extract_mip_filter_velocity_ned_data_from_field(&field, &vel_ned);
-			updated_data[2] = true ; break;
+		case MIP_DATA_DESC_FILTER_VEL_NED:
+			extract_mip_filter_velocity_ned_data_from_field(&field, &vel_ned.sample);
+			vel_ned.updated = true ;
+			break;
 
-		case MIP_DATA_DESC_FILTER_REL_POS_NED: extract_mip_filter_rel_pos_ned_data_from_field(&field, &rel_pos);
-			updated_data[3] = true; break;
+		case MIP_DATA_DESC_FILTER_REL_POS_NED:
+			extract_mip_filter_rel_pos_ned_data_from_field(&field, &rel_pos.sample);
+			rel_pos.updated = true;
+			break;
 
-		case MIP_DATA_DESC_FILTER_LINEAR_ACCELERATION: extract_mip_filter_linear_accel_data_from_field(&field, &lin_accel);
-			updated_data[4] = true; break;
+		case MIP_DATA_DESC_FILTER_LINEAR_ACCELERATION:
+			extract_mip_filter_linear_accel_data_from_field(&field, &lin_accel.sample);
+			lin_accel.updated = true;
+			break;
 
-		case MIP_DATA_DESC_FILTER_POS_UNCERTAINTY: extract_mip_filter_position_llh_uncertainty_data_from_field(&field,
-					&llh_uncert); updated_data[5] = true; break;
+		case MIP_DATA_DESC_FILTER_POS_UNCERTAINTY:
+			extract_mip_filter_position_llh_uncertainty_data_from_field(&field, &llh_uncert.sample);
+			llh_uncert.updated = true;
+			break;
 
-		case MIP_DATA_DESC_FILTER_VEL_UNCERTAINTY: extract_mip_filter_velocity_ned_uncertainty_data_from_field(&field,
-					&vel_uncert); updated_data[6] = true; break;
+		case MIP_DATA_DESC_FILTER_VEL_UNCERTAINTY:
+			extract_mip_filter_velocity_ned_uncertainty_data_from_field(&field, &vel_uncert.sample);
+			vel_uncert.updated = true;
+			break;
 
-		case MIP_DATA_DESC_FILTER_ATT_UNCERTAINTY_EULER: extract_mip_filter_euler_angles_uncertainty_data_from_field(&field,
-					&att_euler_uncert); updated_data[7] = true; break;
+		case MIP_DATA_DESC_FILTER_ATT_UNCERTAINTY_EULER:
+			extract_mip_filter_euler_angles_uncertainty_data_from_field(&field, &att_euler_uncert.sample);
+			att_euler_uncert.updated = true;
+			break;
 
-		case MIP_DATA_DESC_FILTER_COMPENSATED_ANGULAR_RATE: extract_mip_filter_comp_angular_rate_data_from_field(&field,
-					&ang_rate); updated_data[8] = true; break;
+		case MIP_DATA_DESC_FILTER_COMPENSATED_ANGULAR_RATE:
+			extract_mip_filter_comp_angular_rate_data_from_field(&field, &ang_rate.sample);
+			ang_rate.updated = true;
+			break;
 
-		case MIP_DATA_DESC_FILTER_FILTER_STATUS: extract_mip_filter_status_data_from_field(&field, &stat);
-			updated_data[9] = true; break;
+		case MIP_DATA_DESC_FILTER_FILTER_STATUS:
+			extract_mip_filter_status_data_from_field(&field, &stat.sample);
+			stat.updated = true;
+			break;
 
-		case MIP_DATA_DESC_FILTER_AID_MEAS_SUMMARY: extract_mip_filter_aiding_measurement_summary_data_from_field(&field,
-					&aid_sum); updated_data[10] = true; break;
-
-		default: break;
+		default:
+			break;
 		}
 	}
 
-	bool vgp_valid = updated_data[0];
-	bool va_valid = updated_data[1];
-	bool vlp_valid = va_valid && updated_data[2] && updated_data[3] && updated_data[4] && updated_data[5]
-			 && updated_data[6];
-	bool vo_valid = updated_data[2] && updated_data[3] && updated_data[5] && updated_data[6] && updated_data[7];
-	bool vav_valid = updated_data[8];
-	bool debug_valid = updated_data[9] && updated_data[10];
+	// Publish only if the required data was extracted from the packet
+	bool vgp_valid = pos_llh.updated && llh_uncert.updated;
+	bool va_valid = att_quat.updated;
+	bool vlp_valid = att_quat.updated && rel_pos.updated && vel_ned.updated && lin_accel.updated && llh_uncert.updated
+			 && vel_uncert.updated && att_euler_uncert.updated;
+	bool vo_valid = att_quat.updated && rel_pos.updated && vel_ned.updated && ang_rate.updated && llh_uncert.updated
+			&& vel_uncert.updated && att_euler_uncert.updated;
+	bool vav_valid = ang_rate.updated;
 
 	if (vgp_valid) {
 		vehicle_global_position_s gp{0};
-		gp.timestamp = t;
 		gp.timestamp_sample = t;
-		gp.lat = pos_llh.latitude;
-		gp.lon = pos_llh.longitude;
-		gp.alt_ellipsoid = pos_llh.ellipsoid_height;
-		gp.alt = pos_llh.ellipsoid_height;
-		gp.eph = 0.1f;
-		gp.epv = 0.1f;
+
+		gp.lat = pos_llh.sample.latitude;
+		gp.lon = pos_llh.sample.longitude;
+		gp.lat_lon_valid = true;
+
+		gp.alt_ellipsoid = pos_llh.sample.ellipsoid_height;
+		gp.alt = pos_llh.sample.ellipsoid_height - ref->_geoid_height;
+		gp.alt_valid = true;
+
+		gp.eph = sqrtf(sq(llh_uncert.sample.north) + sq(llh_uncert.sample.east) + sq(ref->_gps_origin_ep[0]));
+		gp.epv = sqrtf(sq(llh_uncert.sample.down) + sq(ref->_gps_origin_ep[1]));
+
+		// ------- Fields we cannot obtain -------
+		gp.delta_alt = 0;
+		gp.delta_terrain = 0;
+		gp.lat_lon_reset_counter = 0;
+		gp.alt_reset_counter = 0;
+		gp.terrain_reset_counter = 0;
+
+		gp.dead_reckoning = false;
+		gp.terrain_alt_valid = false;
+		gp.terrain_alt = 0;
+		// ---------------------------------------
+
+		gp.timestamp = hrt_absolute_time();
 		ref->_global_position_pub.publish(gp);
 	}
 
 	if (va_valid) {
 		vehicle_attitude_s att_data{0};
-		att_data.timestamp = t;
 		att_data.timestamp_sample = t;
-		att_data.q[0] = att_quat.q[0];
-		att_data.q[1] = att_quat.q[1];
-		att_data.q[2] = att_quat.q[2];
-		att_data.q[3] = att_quat.q[3];
+
+		att_data.q[0] = att_quat.sample.q[0];
+		att_data.q[1] = att_quat.sample.q[1];
+		att_data.q[2] = att_quat.sample.q[2];
+		att_data.q[3] = att_quat.sample.q[3];
+
+		// ------- Fields we cannot obtain -------
+		att_data.delta_q_reset[0] = 0;
+		att_data.delta_q_reset[0] = 0;
+		att_data.delta_q_reset[0] = 0;
+		att_data.delta_q_reset[0] = 0;
 		att_data.quat_reset_counter = 0;
+		// ---------------------------------------
+
+		att_data.timestamp = hrt_absolute_time();
 		ref->_vehicle_attitude_pub.publish(att_data);
-		// convert to YAW
-		matrix::Eulerf euler_attitude(matrix::Quatf(att_data.q));
-		yaw = euler_attitude.psi();
 	}
 
 	if (vlp_valid) {
 		vehicle_local_position_s vp{0};
-		vp.timestamp = t;
 		vp.timestamp_sample = t;
-		vp.x = rel_pos.relative_position[0];
-		vp.y = rel_pos.relative_position[1];
-		vp.z = rel_pos.relative_position[2];
-		vp.vx = vel_ned.north;
-		vp.vy = vel_ned.east;
-		vp.vz = vel_ned.down;
-		vp.ax = lin_accel.accel[0];
-		vp.ay = lin_accel.accel[1];
-		vp.az = lin_accel.accel[2];
-		vp.eph = sqrt(llh_uncert.north * llh_uncert.north + llh_uncert.east * llh_uncert.east);
-		vp.epv = llh_uncert.down;
-		vp.evh = sqrt(vel_uncert.north * vel_uncert.north + vel_uncert.east * vel_uncert.east);
-		vp.evv = vel_uncert.down;
-		vp.delta_xy[0] = 0.f;
-		vp.delta_xy[1] = 0.f;
-		vp.xy_reset_counter = 0;
-		vp.z_valid = true;
+
+		vp.x = rel_pos.sample.relative_position[0];
+		vp.y = rel_pos.sample.relative_position[1];
+		vp.z = rel_pos.sample.relative_position[2];
 		vp.xy_valid = true;
+		vp.z_valid = true;
+
+		vp.vx = vel_ned.sample.north;
+		vp.vy = vel_ned.sample.east;
+		vp.vz = vel_ned.sample.down;
+		vp.z_deriv = vp.vz;
 		vp.v_xy_valid = true;
 		vp.v_z_valid = true;
-		vp.z_deriv = vp.vz;
-		vp.z_global = true;
-		vp.xy_global = true;
-		// Set heading as valid if we have any yaw
+
+		// Conversion of liner acceleration from body frame to NED frame
+		matrix::Quatf quat{att_quat.sample.q[0], att_quat.sample.q[1], att_quat.sample.q[2], att_quat.sample.q[3]};
+		matrix::Vector3f acc_body{lin_accel.sample.accel[0], lin_accel.sample.accel[1], lin_accel.sample.accel[2]};
+		matrix::Vector3f acc_ned = quat.rotateVectorInverse(acc_body);
+
+		vp.ax = acc_ned(0);
+		vp.ay = acc_ned(1);
+		vp.az = acc_ned(2);
+
+		// Get yaw from attitude for heading
+		matrix::Eulerf euler_attitude(matrix::Quatf(att_quat.sample.q[0], att_quat.sample.q[1], att_quat.sample.q[2],
+					      att_quat.sample.q[3]));
+		float yaw = euler_attitude.psi();
+
 		vp.heading_good_for_control = (yaw != NAN);
-		vp.heading = yaw; // This is extracted from vehicle attitude
+		vp.heading = yaw;
+		vp.heading_var = att_euler_uncert.sample.yaw;
+
+		vp.xy_global = true;
+		vp.z_global = true;
+		vp.ref_timestamp = ref->_ref_pos_ts;
+		vp.ref_lat = ref->_ref_pos[0];
+		vp.ref_lon = ref->_ref_pos[1];
+		vp.ref_alt = ref->_ref_alt_msl;
+
+		vp.eph = sqrtf(sq(llh_uncert.sample.north) + sq(llh_uncert.sample.east));
+		vp.epv = llh_uncert.sample.down;
+		vp.evh = sqrtf(sq(vel_uncert.sample.north) + sq(vel_uncert.sample.east));
+		vp.evv = vel_uncert.sample.down;
+
 		vp.vxy_max = INFINITY;
 		vp.vz_max = INFINITY;
 		vp.hagl_min = INFINITY;
 		vp.hagl_max = INFINITY;
+
+		// ------- Fields we cannot obtain -------
+		vp.delta_xy[0] = 0;
+		vp.delta_xy[1] = 0;
+		vp.xy_reset_counter = 0;
+		vp.delta_z = 0;
+		vp.z_reset_counter = 0;
+
+		vp.delta_vxy[0] = 0;
+		vp.delta_vxy[1] = 0;
+		vp.vxy_reset_counter = 0;
+		vp.delta_vz = 0;
+		vp.vz_reset_counter = 0;
+
+		vp.unaided_heading = NAN;
+		vp.delta_heading = 0;
+		vp.heading_reset_counter = 0;
+
+		vp.tilt_var = 0;
+
+		vp.dist_bottom_valid = 0;
+		vp.dist_bottom = 0;
+		vp.dist_bottom_var = 0;
+		vp.delta_dist_bottom = 0;
+		vp.dist_bottom_reset_counter = 0;
+		vp.dist_bottom_sensor_bitfield = 0;
+
+		vp.dead_reckoning = false;
+		// ---------------------------------------
+
+		vp.timestamp = hrt_absolute_time();
 		ref->_vehicle_local_position_pub.publish(vp);
+
 	}
 
 	if (vo_valid) {
 		vehicle_odometry_s vo{0};
-		vo.timestamp = t;
 		vo.timestamp_sample = t;
-		vo.position[0] = rel_pos.relative_position[0];
-		vo.position[1] = rel_pos.relative_position[1];
-		vo.position[2] = rel_pos.relative_position[2];
-		vo.velocity[0] = vel_ned.north;
-		vo.velocity[1] = vel_ned.east;
-		vo.velocity[2] = vel_ned.down;
-		vo.position_variance[0] = llh_uncert.north;
-		vo.position_variance[1] = llh_uncert.east;
-		vo.position_variance[2] = llh_uncert.down;
-		vo.velocity_variance[0] = vel_uncert.north;
-		vo.velocity_variance[1] = vel_uncert.east;
-		vo.velocity_variance[2] = vel_uncert.down;
-		vo.orientation_variance[0] = att_euler_uncert.roll;
-		vo.orientation_variance[1] = att_euler_uncert.pitch;
-		vo.orientation_variance[2] = att_euler_uncert.yaw;
+
+		vo.pose_frame = 1;
+		vo.position[0] = rel_pos.sample.relative_position[0];
+		vo.position[1] = rel_pos.sample.relative_position[1];
+		vo.position[2] = rel_pos.sample.relative_position[2];
+
+		vo.q[0] = att_quat.sample.q[0];
+		vo.q[1] = att_quat.sample.q[1];
+		vo.q[2] = att_quat.sample.q[2];
+		vo.q[3] = att_quat.sample.q[3];
+
+		vo.velocity_frame = 1;
+		vo.velocity[0] = vel_ned.sample.north;
+		vo.velocity[1] = vel_ned.sample.east;
+		vo.velocity[2] = vel_ned.sample.down;
+
+		vo.angular_velocity[0] = ang_rate.sample.gyro[0];
+		vo.angular_velocity[1] = ang_rate.sample.gyro[1];
+		vo.angular_velocity[2] = ang_rate.sample.gyro[2];
+
+		vo.position_variance[0] = llh_uncert.sample.north;
+		vo.position_variance[1] = llh_uncert.sample.east;
+		vo.position_variance[2] = llh_uncert.sample.down;
+
+		vo.velocity_variance[0] = vel_uncert.sample.north;
+		vo.velocity_variance[1] = vel_uncert.sample.east;
+		vo.velocity_variance[2] = vel_uncert.sample.down;
+
+		vo.orientation_variance[0] = att_euler_uncert.sample.roll;
+		vo.orientation_variance[1] = att_euler_uncert.sample.pitch;
+		vo.orientation_variance[2] = att_euler_uncert.sample.yaw;
+
+		// ------- Fields we cannot obtain -------
+		vo.reset_counter = 0;
+		vo.quality = 0;
+		// ---------------------------------------
+
+		vo.timestamp = hrt_absolute_time();
 		ref->_vehicle_odometry_pub.publish(vo);
 	}
 
 	if (vav_valid) {
 		vehicle_angular_velocity_s av{0};
-		av.timestamp = t;
 		av.timestamp_sample = t;
-		av.xyz[0] = ang_rate.gyro[0];
-		av.xyz[1] = ang_rate.gyro[1];
-		av.xyz[2] = ang_rate.gyro[2];
-		// xyz_derivative ??
+
+		av.xyz[0] = ang_rate.sample.gyro[0];
+		av.xyz[1] = ang_rate.sample.gyro[1];
+		av.xyz[2] = ang_rate.sample.gyro[2];
+
+		// ------- Fields we cannot obtain -------
+		av.xyz_derivative[0] = 0;
+		av.xyz_derivative[1] = 0;
+		av.xyz_derivative[2] = 0;
+		// ---------------------------------------
+
+		av.timestamp = hrt_absolute_time();
 		ref->_vehicle_angular_velocity_pub.publish(av);
 	}
 
-	if (debug_valid) {
-		debug_array_s dbg{0};
-		dbg.id = 0x01;
-		dbg.timestamp = t;
-		strcpy(dbg.name, "CV7");
-		dbg.data[0] = stat.filter_state * 1.0f;
-		dbg.data[1] = stat.dynamics_mode * 1.0f;
-		dbg.data[2] = stat.status_flags * 1.0f;
-		dbg.data[3] = aid_sum.indicator * 1.0f;
-		dbg.data[4] = aid_sum.time_of_week * 1.0f;
-		dbg.data[5] = aid_sum.source * 1.0f;
-		dbg.data[6] = aid_sum.type * 1.0f;
-		ref->_debug_array_pub.publish(dbg);
-	}
-
-	//check if condition if correct - Joel
-	//Keep status and llh_uncert at same rate? - Joel
-	if (true) {
+	if (stat.updated) {
 		estimator_status_s status{0};
-		status.timestamp = t;
 		status.timestamp_sample = t;
-		// Note: These flags require insight into the inner operations of the filter.
-		//       Below is a minimal mapping of error flags from CV7 to the PX4 health flags
-		// Filter State Mapping, if the filter is in 4, set merging GPS and Height being fused flags
-		// Only the gps flag is inspected in the checks
-		status.control_mode_flags = stat.filter_state == 4 ? (0x1 << estimator_status_s::CS_GPS) |
-					    (0x1 << estimator_status_s::CS_GPS_HGT) : 0x00;
-		// If there is a general filter condition, set a fault flag to trigger an issue
-		status.filter_fault_flags = (stat.status_flags & MIP_FILTER_STATUS_FLAGS_GQ7_FILTER_CONDITION) ? 0x1 : 0x00;
+
+		status.output_tracking_error[0] = 0;
+		status.output_tracking_error[1] = 0;
+		status.output_tracking_error[2] = 0;
+
 		status.gps_check_fail_flags = 0;
+
+		// Minimal mapping of error flags from CV7 to the PX4 health flags
+		status.control_mode_flags = stat.sample.filter_state == 4 ? (0x1 << estimator_status_s::CS_GPS) |
+					    (0x1 << estimator_status_s::CS_GPS_HGT) : 0x00;
+		status.filter_fault_flags = stat.sample.status_flags;
+
+		status.pos_horiz_accuracy = sqrtf(sq(llh_uncert.sample.north) + sq(llh_uncert.sample.east));
+		status.pos_vert_accuracy = llh_uncert.sample.down;
+
+		status.hdg_test_ratio = 0.1f;
 		status.vel_test_ratio = 0.1f;
 		status.pos_test_ratio = 0.1f;
 		status.hgt_test_ratio = 0.1f;
 		status.tas_test_ratio = 0.1f;
 		status.hagl_test_ratio = 0.1f;
 		status.beta_test_ratio = 0.1f;
-		status.pos_horiz_accuracy = sqrt(llh_uncert.north * llh_uncert.north + llh_uncert.east * llh_uncert.east);
-		status.pos_vert_accuracy = llh_uncert.down;
+
 		status.solution_status_flags = 0;
+
+		status.reset_count_vel_ne = 0;
+		status.reset_count_vel_d = 0;
+		status.reset_count_pos_ne = 0;
+		status.reset_count_pod_d = 0;
+		status.reset_count_quat = 0;
+
 		status.time_slip = 0;
+
 		status.pre_flt_fail_innov_heading = false;
+		status.pre_flt_fail_innov_height = false;
+		status.pre_flt_fail_innov_pos_horiz = false;
 		status.pre_flt_fail_innov_vel_horiz = false;
 		status.pre_flt_fail_innov_vel_vert = false;
-		status.pre_flt_fail_innov_height = false;
 		status.pre_flt_fail_mag_field_disturbed = false;
+
 		status.accel_device_id = ref->_dev_id;
 		status.gyro_device_id = ref->_dev_id;
 		status.mag_device_id = ref->_dev_id;
 		status.baro_device_id = ref->_dev_id;
+
+		status.health_flags = 0;
+		status.timeout_flags = 0;
+
+		status.mag_inclination_deg = 0;
+		status.mag_inclination_ref_deg = 0;
+		status.mag_strength_gs = 0;
+		status.mag_strength_ref_gs = 0;
+
+
+		status.timestamp = hrt_absolute_time();
 		ref->_estimator_status_pub.publish(status);
+
 		sensor_selection_s sensor_selection{};
 		sensor_selection.accel_device_id = ref->_dev_id;
 		sensor_selection.gyro_device_id = ref->_dev_id;
-		sensor_selection.timestamp = t;
+
+		sensor_selection.timestamp = hrt_absolute_time();
 		ref->_sensor_selection_pub.publish(sensor_selection);
 	}
 }
@@ -928,7 +1124,7 @@ bool MicroStrain::init()
 	return true;
 }
 
-void MicroStrain::service_cv7()
+void MicroStrain::sendAidingMeasurements()
 {
 	sensor_gps_s gps{0};
 
@@ -942,10 +1138,7 @@ void MicroStrain::service_cv7()
 		return;
 	}
 
-#define deg_conv(x) (double((x*1.0) / 10000000.0))
-
-	// If the timestamp has not been set, then don't send any data
-	// into the cv7 filter
+	// If the timestamp has not been set, then don't send any data into the filter
 	if (gps.time_utc_usec == 0) {
 		return;
 	}
@@ -953,34 +1146,54 @@ void MicroStrain::service_cv7()
 	mip_time t;
 	t.timebase = MIP_TIME_TIMEBASE_TIME_OF_ARRIVAL;
 	t.reserved = 0x01;
-	t.nanoseconds = 0; // No offset
+	t.nanoseconds = 0;
 
+	_geoid_height = gps.altitude_ellipsoid_m - gps.altitude_msl_m;
 
-	// float llh_uncertainty[3] = {gps.eph,gps.eph,gps.eph}; // What is the uncertainty?
 	float llh_uncertainty[3] = {1.0, 1.0, 1.0};
-	mip_aiding_llh_pos(&_device, &t, MIP_FILTER_REFERENCE_FRAME_LLH, deg_conv(gps.latitude_deg),
-			   deg_conv(gps.longitude_deg),
-			   ((gps.altitude_ellipsoid_m * 1.0) / 1000.0), llh_uncertainty, MIP_AIDING_LLH_POS_COMMAND_VALID_FLAGS_ALL);
+	mip_aiding_llh_pos(&_device, &t, MIP_FILTER_REFERENCE_FRAME_LLH, gps.latitude_deg,
+			   gps.longitude_deg,
+			   gps.altitude_ellipsoid_m, llh_uncertainty, MIP_AIDING_LLH_POS_COMMAND_VALID_FLAGS_ALL);
 
 	if (gps.vel_ned_valid) {
 		float ned_v[3] = {gps.vel_n_m_s, gps.vel_e_m_s, gps.vel_d_m_s};
-		// float ned_velocity_uncertainty[3] = {gps.s_variance_m_s,gps.s_variance_m_s,gps.s_variance_m_s}; // What is the uncertainty of NED velocity?
 		float ned_velocity_uncertainty[3] = {0.1, 0.1, 0.1};
 		mip_aiding_ned_vel(&_device, &t, MIP_FILTER_REFERENCE_FRAME_LLH, ned_v, ned_velocity_uncertainty,
 				   MIP_AIDING_NED_VEL_COMMAND_VALID_FLAGS_ALL);
 	}
 
-	if (PX4_ISFINITE(gps.heading)) {
-		// float heading = PX4_ISFINITE(gps.heading_offset) ? gps.heading + gps.heading_offset : gps.heading;
-		float heading = gps.heading;
-		// There are no pre-defined flags for the heading (that I can find), setting everything to 1 for now
-		mip_aiding_true_heading(&_device, &t, MIP_FILTER_REFERENCE_FRAME_LLH, heading, gps.heading_accuracy, 0xff);
-	}
+
+// ---------------------------------------------------------- DEBUG START -----------------------------------------------------------------------
+
+	// if (_debug_count == 250) {
+	// 	mip_time t;
+	// 	t.timebase = MIP_TIME_TIMEBASE_TIME_OF_ARRIVAL;
+	// 	t.reserved = 0x01;
+	// 	t.nanoseconds = 0; // No offset
+
+	// 	float llh_uncert.sample[3] = {1.0, 1.0, 1.0};
+	// 	mip_aiding_llh_pos(&_device, &t, MIP_FILTER_REFERENCE_FRAME_LLH, 44.4377,
+	// 			   -73.1057,
+	// 			   122.9469, llh_uncert.sample, MIP_AIDING_LLH_POS_COMMAND_VALID_FLAGS_ALL);
+
+
+	// 	float ned_v[3] = {2.1, 0, 0};
+	// 	float ned_velocity_uncertainty[3] = {1.0, 1.0, 1.0};
+	// 	mip_aiding_ned_vel(&_device, &t, MIP_FILTER_REFERENCE_FRAME_LLH, ned_v, ned_velocity_uncertainty,
+	// 			   MIP_AIDING_NED_VEL_COMMAND_VALID_FLAGS_ALL);
+
+	// 	_debug_count = 0;
+	// }
+
+	// _debug_count++;
+
+// ---------------------------------------------------------- DEBUG END -----------------------------------------------------------------------
 
 }
 
 void MicroStrain::Run()
 {
+
 	if (should_exit()) {
 		ScheduleClear();
 		exit_and_cleanup();
@@ -992,6 +1205,7 @@ void MicroStrain::Run()
 
 	if (!_is_initialized) {
 		_is_initialized = initializeIns();
+		PX4_INFO("INIT DONE");
 	}
 
 	// Initialization failed, stop the module
@@ -1012,9 +1226,10 @@ void MicroStrain::Run()
 
 	mip_interface_update(&_device, false);
 
-	if (_ms_mode == 1) {service_cv7();}
+	if (_ms_mode == 1 && _param_aiding_en.get() == 1) {sendAidingMeasurements();}
 
 	perf_end(_loop_perf);
+
 }
 
 int MicroStrain::task_spawn(int argc, char *argv[])
