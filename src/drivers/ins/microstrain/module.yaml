@@ -78,10 +78,92 @@ parameters:
             type: int32
             default: 1
 
-        AIDING_EN:
+        MS_AIDING_EN:
             description:
                 short: Enables Aiding Measurements to the Sensor
                 long: |
-                    Placeholder
+                    Setting to 1 enables the GNSS position, velocity and potentially heading to be sent as aiding measurements to the sensor.
             type: int32
             default: 1
+
+        GNSS_OFFSET1_X:
+            description:
+                short: X offset of antenna 1
+                long: |
+                    GPS X offset, this is antenna 1 for dual antenna
+            type: int32
+            default: 0
+
+        GNSS_OFFSET1_Y:
+            description:
+                short: Y offset of antenna 1
+                long: |
+                    GPS Y offset, this is antenna 1 for dual antenna
+            type: int32
+            default: 0
+
+        GNSS_OFFSET1_Z:
+            description:
+                short: Z offset of antenna 1
+                long: |
+                    GPS Z offset, this is antenna 1 for dual antenna
+            type: int32
+            default: 0
+
+        GNSS_OFFSET2_X:
+            description:
+                short: X offset of antenna 2
+                long: |
+                    This will only be used if the sensor supports dual antenna
+            type: int32
+            default: 0
+
+        GNSS_OFFSET2_Y:
+            description:
+                short: Y offset of antenna 2
+                long: |
+                    This will only be used if the sensor supports dual antenna
+            type: int32
+            default: 0
+
+        GNSS_OFFSET2_Z:
+            description:
+                short: Z offset of antenna 2
+                long: |
+                    This will only be used if the sensor supports dual antenna
+            type: int32
+            default: 0
+
+        MS_SENSOR_ROLL:
+            description:
+                short: Sensor roll
+                long: |
+                    Sensor to Vehicle Transform (Roll)
+            type: int32
+            default: 0
+
+        MS_SENSOR_PTCH:
+            description:
+                short: Sensor pitch
+                long: |
+                    Sensor to Vehicle Transform (Pitch)
+            type: int32
+            default: 0
+
+        MS_SENSOR_YAW:
+            description:
+                short: Sensor yaw
+                long: |
+                    Sensor to Vehicle Transform (Yaw)
+            type: int32
+            default: 0
+
+        MS_HEADING_EN:
+            description:
+                short: Enables Aiding Heading Measurements to the Sensor
+                long: |
+                    If enabled, the device will be configured to accept external heading as an aiding meaurement.
+                    If disabled, and the device suppots dual antenna, it will be configured to accept heading as an aiding measurement internally
+            type: int32
+            default: 0
+

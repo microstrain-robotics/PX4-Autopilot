@@ -134,6 +134,8 @@ private:
 
 	mip_cmd_result writeFilterInitConfig();
 
+	mip_cmd_result writeRelPosConfig();
+
 	bool init();
 
 	uint32_t _dev_id{0};
@@ -158,9 +160,6 @@ private:
 	uint8_t _parse_buffer[2048];
 	bool _is_initialized{false};
 	int _ms_schedule_rate_us{0};
-	bool _ms_mode{false};
-
-	int _debug_count = 0;
 
 	template <typename T>
 	struct sensorSample {
@@ -174,21 +173,14 @@ private:
 	double _ref_pos_ts = 0;
 	double _gps_origin_ep[2] = {0};
 
-	float gnss_antenna_offset1[3] = { 0.0F, 0.0F, 0.0F }; // Should this be a param
-	float gnss_antenna_offset2[3] = { 0.0F, 0.0F, 0.0F};
-	mip_aiding_frame_config_command_rotation rotation{0.0F, 0.0F, 0.0F};
-
 	uint16_t _supported_descriptors[1024] = {0};
 	uint16_t _supported_desc_len = 0;
 	uint16_t _supported_descriptor_sets[1024] = {0};
 	uint16_t _supported_desc_set_len = 0;
 
-	uORB::Publication<vehicle_local_position_s> _vehicle_local_position_pub{ORB_ID(vehicle_local_position)};
-	uORB::Publication<vehicle_angular_velocity_s> _vehicle_angular_velocity_pub{ORB_ID(vehicle_angular_velocity)};
-	uORB::Publication<vehicle_attitude_s> _vehicle_attitude_pub{ORB_ID(vehicle_attitude)};
-	uORB::Publication<vehicle_global_position_s> _global_position_pub{ORB_ID(vehicle_global_position)};
-	uORB::Publication<vehicle_odometry_s> _vehicle_odometry_pub{ORB_ID(vehicle_odometry)};
-	uORB::Publication<debug_array_s> _debug_array_pub{ORB_ID(debug_array)};
+	float gnss_antenna_offset1[3] = {0};
+	float gnss_antenna_offset2[3] = {0};
+	mip_aiding_frame_config_command_rotation rotation = {0};
 
 	// Needed for health checks
 	uORB::Publication<estimator_status_s> _estimator_status_pub{ORB_ID(estimator_status)};
@@ -214,8 +206,25 @@ private:
 		(ParamInt<px4::params::CV7_ALIGNMENT>) _param_cv7_alignment,
 		(ParamInt<px4::params::CV7_INT_MAG_EN>) _param_cv7_int_mag_en,
 		(ParamInt<px4::params::MS_MODE>) _param_ms_mode,
-		(ParamInt<px4::params::AIDING_EN>) _param_aiding_en
+		(ParamInt<px4::params::MS_AIDING_EN>) _param_ms_aiding_en,
+		(ParamInt<px4::params::GNSS_OFFSET1_X>) _param_gnss_offset1_x,
+		(ParamInt<px4::params::GNSS_OFFSET1_Y>) _param_gnss_offset1_y,
+		(ParamInt<px4::params::GNSS_OFFSET1_Z>) _param_gnss_offset1_z,
+		(ParamInt<px4::params::GNSS_OFFSET2_X>) _param_gnss_offset2_x,
+		(ParamInt<px4::params::GNSS_OFFSET2_Y>) _param_gnss_offset2_y,
+		(ParamInt<px4::params::GNSS_OFFSET2_Z>) _param_gnss_offset2_z,
+		(ParamInt<px4::params::MS_SENSOR_ROLL>) _param_ms_sensor_roll,
+		(ParamInt<px4::params::MS_SENSOR_PTCH>) _param_ms_sensor_pitch,
+		(ParamInt<px4::params::MS_SENSOR_YAW>) _param_ms_sensor_yaw,
+		(ParamInt<px4::params::MS_HEADING_EN>) _param_ms_heading_en
 	)
 
+	uORB::Publication<vehicle_global_position_s> _vehicle_global_position_pub{(_param_ms_mode.get() == 0) ? ORB_ID(external_ins_global_position) : ORB_ID(
+			vehicle_global_position)};
+	uORB::Publication<vehicle_attitude_s> _vehicle_attitude_pub{(_param_ms_mode.get() == 0) ? ORB_ID(external_ins_attitude) : ORB_ID(vehicle_attitude)};
+	uORB::Publication<vehicle_local_position_s> _vehicle_local_position_pub{(_param_ms_mode.get() == 0) ? ORB_ID(external_ins_local_position) : ORB_ID(
+			vehicle_local_position)};
+	uORB::Publication<vehicle_odometry_s> _vehicle_odometry_pub{ORB_ID(vehicle_odometry)};
+	uORB::Publication<vehicle_angular_velocity_s> _vehicle_angular_velocity_pub{ORB_ID(vehicle_angular_velocity)};
 
 };

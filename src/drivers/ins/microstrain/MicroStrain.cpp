@@ -71,11 +71,20 @@ MicroStrain::MicroStrain(const char *uart_port) :
 	_sensor_baro.temperature = 0;
 	_sensor_baro.error_count = 0;
 
-	// Check to see if we want to use external filter data
-	_ms_mode = _param_ms_mode.get();
+	gnss_antenna_offset1[0] = (float)_param_gnss_offset1_x.get();
+	gnss_antenna_offset1[1] = (float)_param_gnss_offset1_y.get();
+	gnss_antenna_offset1[2] = (float)_param_gnss_offset1_z.get();
+
+	gnss_antenna_offset2[0] = (float)_param_gnss_offset2_x.get();
+	gnss_antenna_offset2[1] = (float)_param_gnss_offset2_y.get();
+	gnss_antenna_offset2[2] = (float)_param_gnss_offset2_z.get();
+
+	rotation.euler[0] = (float)_param_ms_sensor_roll.get();
+	rotation.euler[1] = (float)_param_ms_sensor_pitch.get();
+	rotation.euler[2] = (float)_param_ms_sensor_yaw.get();
 
 	// Disables EKF2 to use the INS
-	if (_ms_mode == 1) {
+	if (_param_ms_mode.get() == 1) {
 
 		int32_t m = 0;
 
@@ -102,6 +111,7 @@ MicroStrain::MicroStrain(const char *uart_port) :
 
 		m = 1;
 		param_set(param_find("SENS_MAG_MODE"), &m);
+
 	}
 
 }
@@ -118,9 +128,8 @@ MicroStrain::~MicroStrain()
 	_vehicle_local_position_pub.unadvertise();
 	_vehicle_angular_velocity_pub.unadvertise();
 	_vehicle_attitude_pub.unadvertise();
-	_global_position_pub.unadvertise();
+	_vehicle_global_position_pub.unadvertise();
 	_vehicle_odometry_pub.unadvertise();
-	_debug_array_pub.unadvertise();
 	_estimator_status_pub.unadvertise();
 
 	perf_free(_loop_perf);
@@ -493,6 +502,7 @@ mip_cmd_result MicroStrain::configureAidingSources()
 	}
 
 	if (res != MIP_ACK_OK) {
+		PX4_ERR("Mag Aid Source Fail");
 		return res;
 	}
 
@@ -501,12 +511,24 @@ mip_cmd_result MicroStrain::configureAidingSources()
 			MIP_FILTER_AIDING_MEASUREMENT_ENABLE_COMMAND_AIDING_SOURCE_GNSS_POS_VEL, true);
 
 	if (res != MIP_ACK_OK) {
+		PX4_ERR("GNSS_POSVEl Fail");
+		return res;
+	}
+
+	// Enables external heading as an aiding measurement
+	if (_param_ms_heading_en.get()) {
+		res = mip_filter_write_aiding_measurement_enable(&_device,
+				MIP_FILTER_AIDING_MEASUREMENT_ENABLE_COMMAND_AIDING_SOURCE_GNSS_HEADING, true);
+	}
+
+	if (res != MIP_ACK_OK) {
+		PX4_ERR("Heading Fail");
 		return res;
 	}
 
 	// Sets up multi antenna offsets for the GNSS/INS if its supported
-	//if (supportsDescriptorSet(MIP_GNSS1_DATA_DESC_SET)) {
-	if (supportsDescriptor(MIP_FILTER_CMD_DESC_SET, MIP_CMD_DESC_FILTER_MULTI_ANTENNA_OFFSET)) {
+	if (supportsDescriptorSet(MIP_GNSS1_DATA_DESC_SET)) {
+		//if (supportsDescriptor(MIP_FILTER_CMD_DESC_SET, MIP_CMD_DESC_FILTER_MULTI_ANTENNA_OFFSET)) {
 		PX4_INFO("GQ7");
 		mip_cmd_result res1 = mip_filter_write_multi_antenna_offset(&_device, 2, gnss_antenna_offset1);
 		mip_cmd_result res2 = mip_filter_write_multi_antenna_offset(&_device, 3, gnss_antenna_offset2);
@@ -514,17 +536,24 @@ mip_cmd_result MicroStrain::configureAidingSources()
 		if (res1 != MIP_ACK_OK) {
 			return res1;
 
-		} else if (res2 != MIP_ACK_OK) {
+		}
+
+		if (res2 != MIP_ACK_OK) {
 			return res2;
 		}
 
-		// Enables heading as an aiding measurement
-		return mip_filter_write_aiding_measurement_enable(&_device,
-				MIP_FILTER_AIDING_MEASUREMENT_ENABLE_COMMAND_AIDING_SOURCE_GNSS_HEADING, true);
+		// Enables dual antenna heading as an aiding measurement
+		if (!_param_ms_heading_en.get()) {
+			res = mip_filter_write_aiding_measurement_enable(&_device,
+					MIP_FILTER_AIDING_MEASUREMENT_ENABLE_COMMAND_AIDING_SOURCE_EXTERNAL_HEADING, true);
+		}
+
+		return res;
 
 	}
 
 	PX4_INFO("CV7");
+
 	// Otherwise sets up the aiding frame for the INS
 	return mip_aiding_write_frame_config(&_device, 2, MIP_AIDING_FRAME_CONFIG_COMMAND_FORMAT_EULER, false,
 					     gnss_antenna_offset1, &rotation);
@@ -555,6 +584,38 @@ mip_cmd_result MicroStrain::writeFilterInitConfig()
 			MIP_FILTER_INITIALIZATION_CONFIGURATION_COMMAND_INITIAL_CONDITION_SOURCE_AUTO_POS_VEL_ATT,
 			initial_alignment,
 			0.0, 0.0, 0.0, filter_init_pos, filter_init_vel, MIP_FILTER_REFERENCE_FRAME_LLH);
+}
+
+mip_cmd_result MicroStrain::writeRelPosConfig()
+{
+	sensor_gps_s gp{0};
+
+	while (true) {
+		_sensor_gps_sub.update(&gp);
+
+		// Fix isn't 3D or RTK or RTCM
+		if ((gp.fix_type < 3) || (gp.fix_type > 6)) {
+			continue;
+		}
+
+		// If the timestamp has not been set, then don't send any data into the filter
+		if (gp.time_utc_usec == 0) {
+			continue;
+		}
+
+		break;
+	}
+
+	_ref_pos[0] = gp.latitude_deg;
+	_ref_pos[1] = gp.longitude_deg;
+	_ref_pos[2] = gp.altitude_ellipsoid_m;
+	_ref_pos_ts = gp.timestamp_sample;
+	_ref_alt_msl = gp.altitude_msl_m;
+
+	_gps_origin_ep[0] = gp.eph;
+	_gps_origin_ep[1] = gp.epv;
+
+	return mip_filter_write_rel_pos_configuration(&_device, 1, 2, _ref_pos);
 }
 
 bool MicroStrain::initializeIns()
@@ -610,46 +671,48 @@ bool MicroStrain::initializeIns()
 					       &sensorCallback,
 					       this);
 
-	if (_ms_mode == 1) {
+	// Configure the Filter message format based on what descriptors are supported
+	if (configureFilterMessageFormat() != MIP_ACK_OK) {
+		PX4_INFO("ERROR: Could not write message format");
+		return false;
+	}
 
-		// Configure the aiding sources based on what the sensor supports
-		if (configureAidingSources() != MIP_ACK_OK) {
-			PX4_ERR("ERROR: Could not configure aiding frames!");
-			return false;
-		}
+	// Register data callbacks
+	mip_interface_register_packet_callback(&_device, &_filter_data_handler, MIP_FILTER_DATA_DESC_SET, false,
+					       &filterCallback,
+					       this);
 
-		// Configure the IMU message format based on what descriptors are supported
-		if (configureFilterMessageFormat() != MIP_ACK_OK) {
-			PX4_INFO("ERROR: Could not write message format");
-			return false;
-		}
+	PX4_INFO("PARAMS %f/%f/%f / %f/%f/%f / %f/%f/%f", (double)gnss_antenna_offset1[0], (double)gnss_antenna_offset1[1],
+		 (double)gnss_antenna_offset1[2], (double)gnss_antenna_offset2[0], (double)gnss_antenna_offset2[1],
+		 (double)gnss_antenna_offset2[2], (double)rotation.euler[0],
+		 (double)rotation.euler[1], (double)rotation.euler[2]);
 
-		// Register data callbacks
-		mip_interface_register_packet_callback(&_device, &_filter_data_handler, MIP_FILTER_DATA_DESC_SET, false,
-						       &filterCallback,
-						       this);
 
-		// Reset the filter, then set the initial conditions
-		if (mip_filter_reset(&_device) != MIP_ACK_OK) {
-			PX4_ERR("ERROR: Could not reset the filter!");
-			return false;
-		}
+	// Configure the aiding sources based on what the sensor supports
+	if (configureAidingSources() != MIP_ACK_OK) {
+		PX4_ERR("ERROR: Could not configure aiding frames!");
+		return false;
+	}
 
-		usleep(1);
+	// Reset the filter, then set the initial conditions
+	if (mip_filter_reset(&_device) != MIP_ACK_OK) {
+		PX4_ERR("ERROR: Could not reset the filter!");
+		return false;
+	}
 
-		// Initialize the filter
-		if (writeFilterInitConfig() != MIP_ACK_OK) {
-			PX4_ERR("ERROR: Could not configure filter initialization!");
-			return false;
-		}
+	usleep(1);
 
-		// Setup the rotation based on PX4 standard rotation sets
-		if (mip_3dm_write_sensor_2_vehicle_transform_euler(&_device, math::radians<float>(rotation.euler[0]),
-				math::radians<float>(rotation.euler[1]), math::radians<float>(rotation.euler[2])) != MIP_ACK_OK) {
-			PX4_ERR("ERROR: Could not set sensor-to-vehicle transformation!");
-			return false;
-		}
+	// Initialize the filter
+	if (writeFilterInitConfig() != MIP_ACK_OK) {
+		PX4_ERR("ERROR: Could not configure filter initialization!");
+		return false;
+	}
 
+	// Setup the rotation based on PX4 standard rotation sets
+	if (mip_3dm_write_sensor_2_vehicle_transform_euler(&_device, math::radians<float>(rotation.euler[0]),
+			math::radians<float>(rotation.euler[1]), math::radians<float>(rotation.euler[2])) != MIP_ACK_OK) {
+		PX4_ERR("ERROR: Could not set sensor-to-vehicle transformation!");
+		return false;
 	}
 
 	if (mip_3dm_write_datastream_control(&_device, MIP_3DM_DATASTREAM_CONTROL_COMMAND_ALL_STREAMS, true) != MIP_ACK_OK) {
@@ -657,21 +720,11 @@ bool MicroStrain::initializeIns()
 		return false;
 	}
 
-
-	// How to handle the case if initialized with no valid pos
-	sensor_gps_s gp{0};
-	_sensor_gps_sub.update(&gp);
-
-	_ref_pos[0] = gp.latitude_deg;
-	_ref_pos[1] = gp.longitude_deg;
-	_ref_pos[2] = gp.altitude_ellipsoid_m;
-	_ref_pos_ts = gp.timestamp_sample;
-	_ref_alt_msl = gp.altitude_msl_m;
-
-	_gps_origin_ep[0] = gp.eph;
-	_gps_origin_ep[1] = gp.epv;
-
-	mip_filter_write_rel_pos_configuration(&_device, 1, 2, _ref_pos);
+	// Write the relative position configuration based on the first gps fix received
+	if (writeRelPosConfig() != MIP_ACK_OK) {
+		PX4_ERR("ERROR: Could not write the relative position config");
+		return false;
+	}
 
 	// Resume the device
 	if (mip_base_resume(&_device) != MIP_ACK_OK) {
@@ -874,7 +927,7 @@ void MicroStrain::filterCallback(void *user, const mip_packet *packet, mip::Time
 		// ---------------------------------------
 
 		gp.timestamp = hrt_absolute_time();
-		ref->_global_position_pub.publish(gp);
+		ref->_vehicle_global_position_pub.publish(gp);
 	}
 
 	if (va_valid) {
@@ -984,7 +1037,7 @@ void MicroStrain::filterCallback(void *user, const mip_packet *packet, mip::Time
 
 	}
 
-	if (vo_valid) {
+	if (vo_valid && ref->_param_ms_mode.get() == 1) {
 		vehicle_odometry_s vo{0};
 		vo.timestamp_sample = t;
 
@@ -1028,7 +1081,7 @@ void MicroStrain::filterCallback(void *user, const mip_packet *packet, mip::Time
 		ref->_vehicle_odometry_pub.publish(vo);
 	}
 
-	if (vav_valid) {
+	if (vav_valid && ref->_param_ms_mode.get() == 1) {
 		vehicle_angular_velocity_s av{0};
 		av.timestamp_sample = t;
 
@@ -1046,7 +1099,7 @@ void MicroStrain::filterCallback(void *user, const mip_packet *packet, mip::Time
 		ref->_vehicle_angular_velocity_pub.publish(av);
 	}
 
-	if (stat.updated) {
+	if (stat.updated && ref->_param_ms_mode.get() == 1) {
 		estimator_status_s status{0};
 		status.timestamp_sample = t;
 
@@ -1150,16 +1203,22 @@ void MicroStrain::sendAidingMeasurements()
 
 	_geoid_height = gps.altitude_ellipsoid_m - gps.altitude_msl_m;
 
-	float llh_uncertainty[3] = {1.0, 1.0, 1.0};
+	float llh_uncertainty[3] = {gps.eph, gps.eph, gps.epv};
 	mip_aiding_llh_pos(&_device, &t, MIP_FILTER_REFERENCE_FRAME_LLH, gps.latitude_deg,
 			   gps.longitude_deg,
 			   gps.altitude_ellipsoid_m, llh_uncertainty, MIP_AIDING_LLH_POS_COMMAND_VALID_FLAGS_ALL);
 
 	if (gps.vel_ned_valid) {
 		float ned_v[3] = {gps.vel_n_m_s, gps.vel_e_m_s, gps.vel_d_m_s};
-		float ned_velocity_uncertainty[3] = {0.1, 0.1, 0.1};
+		float ned_velocity_uncertainty[3] = {sqrtf(gps.s_variance_m_s), sqrtf(gps.s_variance_m_s), sqrtf(gps.s_variance_m_s)};
 		mip_aiding_ned_vel(&_device, &t, MIP_FILTER_REFERENCE_FRAME_LLH, ned_v, ned_velocity_uncertainty,
 				   MIP_AIDING_NED_VEL_COMMAND_VALID_FLAGS_ALL);
+	}
+
+	if (PX4_ISFINITE(gps.heading)) {
+		float heading = gps.heading + gps.heading_offset;
+		mip_aiding_true_heading(&_device, &t, MIP_FILTER_REFERENCE_FRAME_LLH, heading, gps.heading_accuracy, 0xff);
+		// Force  Heading Aiding ? Or Assume its there already
 	}
 
 
@@ -1226,7 +1285,7 @@ void MicroStrain::Run()
 
 	mip_interface_update(&_device, false);
 
-	if (_ms_mode == 1 && _param_aiding_en.get() == 1) {sendAidingMeasurements();}
+	if (_param_ms_aiding_en.get() == 1) {sendAidingMeasurements();}
 
 	perf_end(_loop_perf);
 
