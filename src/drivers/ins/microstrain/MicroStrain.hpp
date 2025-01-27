@@ -72,6 +72,17 @@ using namespace mip::C;
 
 using namespace time_literals;
 
+using matrix::Vector2f;
+
+#define MS_PX4_ERROR(res, ...) \
+	do \
+	{ \
+		PX4_ERR(__VA_ARGS__); \
+		PX4_ERR(" Error: %s", mip_cmd_result_to_string(res)); \
+	} while (0)
+
+static constexpr float sq(float x) { return x * x; };
+
 class MicroStrain : public ModuleBase<MicroStrain>, public ModuleParams, public px4::ScheduledWorkItem
 {
 public:
@@ -97,9 +108,6 @@ public:
 
 	static void filterCallback(void *user, const mip_packet *packet, mip::Timestamp timestamp);
 
-	static constexpr float sq(float x) { return x * x; };
-
-
 private:
 	/** @see ModuleBase */
 	void Run() override;
@@ -107,11 +115,17 @@ private:
 	/// @brief Attempt to connect to the Sensor and set in known configuration
 	bool initializeIns();
 
+	int connectAtBaud(int32_t baud);
+
+	mip_cmd_result forceIdle();
+
 	mip_cmd_result getSupportedDescriptors();
 
 	bool supportsDescriptor(uint8_t descriptor_set, uint8_t field_descriptor);
 
 	bool supportsDescriptorSet(uint8_t descriptor_set);
+
+	mip_cmd_result writeBaudRate(uint32_t baudrate, uint8_t port);
 
 	mip_cmd_result getBaseRate(uint8_t descriptor_set, uint16_t *base_rate);
 
@@ -122,19 +136,13 @@ private:
 	mip_cmd_result writeMessageFormat(uint8_t descriptor_set, uint8_t num_descriptors,
 					  const mip::DescriptorRate *descriptors);
 
-	int connectAtBaud(int32_t baud);
-
-	void sendAidingMeasurements();
-
-	mip::CmdResult forceIdle();
-
-	mip_cmd_result writeBaudRate(uint32_t baudrate, uint8_t port);
+	mip_cmd_result configureAidingMeasurement(uint16_t aiding_source, bool enable);
 
 	mip_cmd_result configureAidingSources();
 
 	mip_cmd_result writeFilterInitConfig();
 
-	mip_cmd_result writeRelPosConfig();
+	void sendAidingMeasurements();
 
 	bool init();
 
@@ -148,6 +156,16 @@ private:
 
 	// Must publish to prevent sensor stale failure (sensors module)
 	uORB::PublicationMulti<sensor_baro_s> _sensor_baro_pub{ORB_ID(sensor_baro)};
+	uORB::Publication<sensor_selection_s> _sensor_selection_pub{ORB_ID(sensor_selection)};
+
+	uORB::Publication<vehicle_global_position_s> _vehicle_global_position_pub;
+	uORB::Publication<vehicle_attitude_s> _vehicle_attitude_pub;
+	uORB::Publication<vehicle_local_position_s> _vehicle_local_position_pub;
+	uORB::Publication<vehicle_odometry_s> _vehicle_odometry_pub{ORB_ID(vehicle_odometry)};
+	uORB::Publication<vehicle_angular_velocity_s> _vehicle_angular_velocity_pub{ORB_ID(vehicle_angular_velocity)};
+
+	// Needed for health checks
+	uORB::Publication<estimator_status_s> _estimator_status_pub{ORB_ID(estimator_status)};
 
 	// Subscriptions
 	uORB::SubscriptionInterval _parameter_update_sub{ORB_ID(parameter_update), 1_s}; // subscription limited to 1 Hz updates
@@ -157,36 +175,33 @@ private:
 	perf_counter_t	_loop_perf{perf_alloc(PC_ELAPSED, MODULE_NAME": cycle")};
 	perf_counter_t	_loop_interval_perf{perf_alloc(PC_INTERVAL, MODULE_NAME": interval")};
 
+	mip_cmd_result MIP_PX4_ERROR = MIP_STATUS_USER_START;
 	uint8_t _parse_buffer[2048];
 	bool _is_initialized{false};
 	int _ms_schedule_rate_us{0};
 
-	template <typename T>
-	struct sensorSample {
-		T sample;
-		bool updated = false;
-	};
-
-	double _geoid_height = 0;
-	double _ref_pos[3] = {0};
-	double _ref_alt_msl = 0;
-	double _ref_pos_ts = 0;
-	double _gps_origin_ep[2] = {0};
-
-	uint16_t _supported_descriptors[1024] = {0};
-	uint16_t _supported_desc_len = 0;
-	uint16_t _supported_descriptor_sets[1024] = {0};
-	uint16_t _supported_desc_set_len = 0;
+	bool _ext_pos_vel_aiding{false};
+	bool _ext_heading_aiding{false};
+	bool _ext_aiding{false};
 
 	float gnss_antenna_offset1[3] = {0};
 	float gnss_antenna_offset2[3] = {0};
 	mip_aiding_frame_config_command_rotation rotation = {0};
 
-	// Needed for health checks
-	uORB::Publication<estimator_status_s> _estimator_status_pub{ORB_ID(estimator_status)};
+	MapProjection _pos_ref{};
+	double _ref_alt = 0;
+	double _gps_origin_ep[2] = {0};
 
-	// Must publish to prevent sensor stale failure (sensors module)
-	uORB::Publication<sensor_selection_s> _sensor_selection_pub{ORB_ID(sensor_selection)};
+	template <typename T>
+	struct SensorSample {
+		T sample;
+		bool updated = false;
+	};
+
+	uint16_t _supported_descriptors[1024] = {0};
+	uint16_t _supported_desc_len = 0;
+	uint16_t _supported_descriptor_sets[1024] = {0};
+	uint16_t _supported_desc_set_len = 0;
 
 	mip::C::mip_interface _device;
 
@@ -198,33 +213,27 @@ private:
 
 	// Parameters
 	DEFINE_PARAMETERS(
+		(ParamInt<px4::params::MS_MODE>) _param_ms_mode,
 		(ParamInt<px4::params::MS_IMU_RATE_HZ>) _param_ms_imu_rate_hz,
 		(ParamInt<px4::params::MS_MAG_RATE_HZ>) _param_ms_mag_rate_hz,
 		(ParamInt<px4::params::MS_BARO_RATE_HZ>) _param_ms_baro_rate_hz,
-		(ParamInt<px4::params::MS_EKF_HRATE_HZ>) _param_ms_filter_rate_high_hz,
-		(ParamInt<px4::params::MS_EKF_LRATE_HZ>) _param_ms_filter_rate_low_hz,
-		(ParamInt<px4::params::CV7_ALIGNMENT>) _param_cv7_alignment,
-		(ParamInt<px4::params::CV7_INT_MAG_EN>) _param_cv7_int_mag_en,
-		(ParamInt<px4::params::MS_MODE>) _param_ms_mode,
-		(ParamInt<px4::params::MS_AIDING_EN>) _param_ms_aiding_en,
-		(ParamInt<px4::params::GNSS_OFFSET1_X>) _param_gnss_offset1_x,
-		(ParamInt<px4::params::GNSS_OFFSET1_Y>) _param_gnss_offset1_y,
-		(ParamInt<px4::params::GNSS_OFFSET1_Z>) _param_gnss_offset1_z,
-		(ParamInt<px4::params::GNSS_OFFSET2_X>) _param_gnss_offset2_x,
-		(ParamInt<px4::params::GNSS_OFFSET2_Y>) _param_gnss_offset2_y,
-		(ParamInt<px4::params::GNSS_OFFSET2_Z>) _param_gnss_offset2_z,
-		(ParamInt<px4::params::MS_SENSOR_ROLL>) _param_ms_sensor_roll,
-		(ParamInt<px4::params::MS_SENSOR_PTCH>) _param_ms_sensor_pitch,
-		(ParamInt<px4::params::MS_SENSOR_YAW>) _param_ms_sensor_yaw,
-		(ParamInt<px4::params::MS_HEADING_EN>) _param_ms_heading_en
+		(ParamInt<px4::params::MS_FILT_RATE_HZ>) _param_ms_filter_rate_hz,
+		(ParamInt<px4::params::MS_ALIGNMENT>) _param_ms_alignment,
+		(ParamInt<px4::params::MS_INT_MAG_EN>) _param_ms_int_mag_en,
+		(ParamInt<px4::params::MS_INT_HEAD_EN>) _param_ms_int_heading_en,
+		(ParamInt<px4::params::MS_EXT_HEAD_EN>) _param_ms_ext_heading_en,
+		(ParamInt<px4::params::MS_SVT_EN>) _param_ms_svt_en,
+		(ParamFloat<px4::params::GNSS_OFFSET1_X>) _param_gnss_offset1_x,
+		(ParamFloat<px4::params::GNSS_OFFSET1_Y>) _param_gnss_offset1_y,
+		(ParamFloat<px4::params::GNSS_OFFSET1_Z>) _param_gnss_offset1_z,
+		(ParamFloat<px4::params::GNSS_OFFSET2_X>) _param_gnss_offset2_x,
+		(ParamFloat<px4::params::GNSS_OFFSET2_Y>) _param_gnss_offset2_y,
+		(ParamFloat<px4::params::GNSS_OFFSET2_Z>) _param_gnss_offset2_z,
+		(ParamFloat<px4::params::MS_SENSOR_ROLL>) _param_ms_sensor_roll,
+		(ParamFloat<px4::params::MS_SENSOR_PTCH>) _param_ms_sensor_pitch,
+		(ParamFloat<px4::params::MS_SENSOR_YAW>) _param_ms_sensor_yaw
 	)
 
-	uORB::Publication<vehicle_global_position_s> _vehicle_global_position_pub{(_param_ms_mode.get() == 0) ? ORB_ID(external_ins_global_position) : ORB_ID(
-			vehicle_global_position)};
-	uORB::Publication<vehicle_attitude_s> _vehicle_attitude_pub{(_param_ms_mode.get() == 0) ? ORB_ID(external_ins_attitude) : ORB_ID(vehicle_attitude)};
-	uORB::Publication<vehicle_local_position_s> _vehicle_local_position_pub{(_param_ms_mode.get() == 0) ? ORB_ID(external_ins_local_position) : ORB_ID(
-			vehicle_local_position)};
-	uORB::Publication<vehicle_odometry_s> _vehicle_odometry_pub{ORB_ID(vehicle_odometry)};
-	uORB::Publication<vehicle_angular_velocity_s> _vehicle_angular_velocity_pub{ORB_ID(vehicle_angular_velocity)};
+
 
 };
