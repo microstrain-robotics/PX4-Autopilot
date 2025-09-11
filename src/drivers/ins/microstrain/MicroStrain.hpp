@@ -192,18 +192,15 @@ private:
 	bool _ext_heading_aiding{false};
 	bool _ext_mag_aiding{false};
 	bool _ext_optical_flow_aiding{false};
-	bool _int_aiding{false};
 
 	float gnss_antenna_offset1[3] = {0};
 	float gnss_antenna_offset2[3] = {0};
 	float ext_mag_offset[3] = {0};
 	float optical_flow_offset[3] = {0};
-	float ext_heading_offset[3] = {0};
 	mip_aiding_frame_config_command_rotation rotation_sens = {0};
 	mip_aiding_frame_config_command_rotation rotation_gnss = {0};
 	mip_aiding_frame_config_command_rotation rotation_ext_mag = {0};
 	mip_aiding_frame_config_command_rotation rotation_oflow = {0};
-	mip_aiding_frame_config_command_rotation rotation_ext_heading = {0};
 
 	float ext_mag_uncert = 0.0;
 	float opt_flow_uncert = 0.0;
@@ -264,13 +261,18 @@ private:
 		(ParamFloat<px4::params::MS_SENSOR_ROLL>) _param_ms_sensor_roll,
 		(ParamFloat<px4::params::MS_SENSOR_PTCH>) _param_ms_sensor_pitch,
 		(ParamFloat<px4::params::MS_SENSOR_YAW>) _param_ms_sensor_yaw,
+		(ParamFloat<px4::params::MS_GNSS_ROLL>) _param_ms_gnss_roll,
+		(ParamFloat<px4::params::MS_GNSS_PTCH>) _param_ms_gnss_pitch,
+		(ParamFloat<px4::params::MS_GNSS_YAW>) _param_ms_gnss_yaw,
+		(ParamFloat<px4::params::MS_EMAG_OFF_X>) _param_ms_emag_offset_x,
+		(ParamFloat<px4::params::MS_EMAG_OFF_Y>) _param_ms_emag_offset_y,
+		(ParamFloat<px4::params::MS_EMAG_OFF_Z>) _param_ms_emag_offset_z,
 		(ParamFloat<px4::params::MS_EMAG_ROLL>) _param_ms_emag_roll,
 		(ParamFloat<px4::params::MS_EMAG_PTCH>) _param_ms_emag_pitch,
 		(ParamFloat<px4::params::MS_EMAG_YAW>) _param_ms_emag_yaw,
 		(ParamFloat<px4::params::MS_OFLW_OFF_X>) _param_ms_oflow_offset_x,
 		(ParamFloat<px4::params::MS_OFLW_OFF_Y>) _param_ms_oflow_offset_y,
 		(ParamFloat<px4::params::MS_OFLW_OFF_Z>) _param_ms_oflow_offset_z,
-		(ParamFloat<px4::params::MS_EHEAD_YAW>) _param_ms_ehead_yaw,
 		(ParamFloat<px4::params::MS_EMAG_UNCERT>) _param_ms_emag_uncert,
 		(ParamFloat<px4::params::MS_OFLW_UNCERT>) _param_ms_oflow_uncert
 	)
