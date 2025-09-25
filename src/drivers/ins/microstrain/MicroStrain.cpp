@@ -1888,8 +1888,8 @@ void MicroStrain::sendMagAiding()
 	float uncert[3] = {ext_mag_uncert, ext_mag_uncert, ext_mag_uncert};
 	//PX4_INFO("%f/%f/%f", (double)mag.magnetometer_ga[0], (double)mag.magnetometer_ga[1], (double)mag.magnetometer_ga[2]);
 
-	mip_cmd_result res = mip_aiding_magnetic_field(&_device, &t, 2, mag.magnetometer_ga, uncert,
-			     MIP_AIDING_MAGNETIC_FIELD_COMMAND_VALID_FLAGS_ALL);
+	mip_aiding_magnetic_field(&_device, &t, 2, mag.magnetometer_ga, uncert,
+				  MIP_AIDING_MAGNETIC_FIELD_COMMAND_VALID_FLAGS_ALL);
 }
 
 void MicroStrain::sendOpticalFlowAiding()
@@ -1909,7 +1909,7 @@ void MicroStrain::sendOpticalFlowAiding()
 	float vel[3] = {ofv.vel_body[0], ofv.vel_body[1], 0};
 	float uncert[3] = {opt_flow_uncert, opt_flow_uncert, 0.0};
 
-	mip_cmd_result res = mip_aiding_vehicle_fixed_frame_velocity(&_device, &t, 3, vel, uncert, 0x0003);
+	mip_aiding_vehicle_fixed_frame_velocity(&_device, &t, 3, vel, uncert, 0x0003);
 }
 
 void MicroStrain::sendAidingMeasurements()
