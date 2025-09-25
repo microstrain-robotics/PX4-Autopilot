@@ -4,7 +4,7 @@ serial_config:
     - command: sleep 1; microstrain start -d ${SERIAL_DEV}
       port_config_param:
         name: SENS_MS_CFG
-        group: Sensorss
+        group: Sensors
 
 parameters:
     - group: Sensors
@@ -137,16 +137,6 @@ parameters:
             reboot_required: true
             default: 0
 
-        MS_EXT_MAG_EN:
-            description:
-                short: Toggles external magnetometer aiding in the device filter
-                long: |
-                    0 = Disabled,
-                    1 = Enabled
-                    Restart required
-            type: int32
-            default: 0
-
         MS_INT_HEAD_EN:
             description:
                 short: Enable MicroStrain internal heading aiding
@@ -184,16 +174,6 @@ parameters:
                 0: Disabled
                 1: Enabled
             reboot_required: true
-            default: 0
-
-        MS_OPT_FLOW_EN:
-            description:
-                short: Toggles optical flow aiding in the device filter
-                long: |
-                    0 = Disabled,
-                    1 = Enabled
-                    Restart required
-            type: int32
             default: 0
 
         MS_SVT_EN:
@@ -319,137 +299,111 @@ parameters:
             reboot_required: true
             default: 0.0
 
-        MS_GNSS_ROLL:
-            description:
-                short: GNSS Orientation (Roll)
-                long: |
-                    The orientation of the device (Radians) with respect to the vehicle frame around the x axis
-                    Restart required
-
-                    This parameter is specific to the MicroStrain driver.
-            type: float
-            default: 0.0
-
-        MS_GNSS_PTCH:
-            description:
-                short: GNSS Orientation (Pitch)
-                long: |
-                    The orientation of the device (Radians) with respect to the vehicle frame around the y axis
-                    Restart required
-
-                    This parameter is specific to the MicroStrain driver.
-            type: float
-            default: 0.0
-
-        MS_GNSS_YAW:
-            description:
-                short: GNSS Orientation (Yaw)
-                long: |
-                    The orientation of the device (Radians) with respect to the vehicle frame around the z axis
-                    Restart required
-
-                    This parameter is specific to the MicroStrain driver.
-            type: float
-            default: 0.0
-
         MS_EMAG_OFF_X:
             description:
-                short: External Magnetometer offset (X)
+                short: MicroStrain External Magnetometer offset (X)
                 long: |
-                    Lever arm offset (m) in the X direction if an external magnetometer is connected
-                    Restart required
+                    Offset (m) in the X direction if an external magnetometer is connected
             type: float
+            reboot_required: true
             default: 0.0
 
         MS_EMAG_OFF_Y:
             description:
-                short: External Magnetometer offset (Y)
+                short: MicroStrain External Magnetometer offset (Y)
                 long: |
-                    Lever arm offset (m) in the Y direction if an external magnetometer is connected
-                    Restart required
+                    Offset (m) in the Y direction if an external magnetometer is connected
             type: float
+            reboot_required: true
             default: 0.0
 
         MS_EMAG_OFF_Z:
             description:
-                short: External Magnetometer offset (Z)
+                short: MicroStrain External Magnetometer offset (Z)
                 long: |
-                    Lever arm offset (m) in the Z direction if an external magnetometer is connected
-                    Restart required
+                    Offset (m) in the Z direction if an external magnetometer is connected
             type: float
+            reboot_required: true
             default: 0.0
 
         MS_EMAG_ROLL:
             description:
-                short: External Magnetometer Orientation (Roll)
+                short: MicroStrain external Magnetometer Orientation (Roll)
                 long: |
                     The orientation of the device (Radians) with respect to the vehicle frame around the x axis
-                    Restart required
-
             type: float
+            reboot_required: true
             default: 0.0
 
         MS_EMAG_PTCH:
             description:
-                short: External Magnetometer Orientation (Pitch)
+                short: MicroStrain External Magnetometer Orientation (Pitch)
                 long: |
                     The orientation of the device (Radians) with respect to the vehicle frame around the y axis
-                    Restart required
-
             type: float
+            reboot_required: true
             default: 0.0
 
         MS_EMAG_YAW:
             description:
-                short: External Magnetometer Orientation (Yaw)
+                short: MicroStrain External Magnetometer Orientation (Yaw)
                 long: |
                     The orientation of the device (Radians) with respect to the vehicle frame around the z axis
-                    Restart required
-
             type: float
+            reboot_required: true
             default: 0.0
 
         MS_OFLW_OFF_X:
             description:
-                short: Optical Flow offset (X)
+                short: MicroStrain optical flow offset (X)
                 long: |
-                    Lever arm offset (m) in the X direction if an Optical Flow sensor is connected
-                    Restart required
+                    Offset (m) in the X direction if an Optical Flow sensor is connected
             type: float
+            reboot_required: true
             default: 0.0
 
         MS_OFLW_OFF_Y:
             description:
-                short: Optical Flow offset (Y)
+                short: MicroStrain optical flow offset (Y)
                 long: |
-                    Lever arm offset (m) in the Y direction if an Optical Flow is connected
-                    Restart required
+                    Offset (m) in the Y direction if an Optical Flow sensor is connected
             type: float
+            reboot_required: true
             default: 0.0
 
         MS_OFLW_OFF_Z:
             description:
-                short: Optical Flow offset (Z)
+                short: MicroStrain optical flow offset (Z)
                 long: |
-                    Lever arm offset (m) in the Z direction if an Optical Flow is connected
-                    Restart required
+                    Offset (m) in the Z direction if an Optical Flow sensor is connected
             type: float
+            reboot_required: true
+            default: 0.0
+
+        MS_EHEAD_YAW:
+            description:
+                short: MicroStrain External Heading Orientation (Yaw)
+                long: |
+                    The orientation of the device (Radians) with respect to the vehicle frame around the z axis.
+            type: float
+            reboot_required: true
             default: 0.0
 
         MS_EMAG_UNCERT:
             description:
-                short: External Magnetometer Uncertainty
+                short: MicroStrain external magnetometer uncertainty
                 long: |
-                    The orientation of the device (Radians) with respect to the vehicle frame around the z axis
-                    Restart required
+                    The 1-sigma uncertainty (in Gauss) for all axes, which will remain constant across all aiding measurements.
             type: float
-            default: 0.0
+            reboot_required: true
+            default: 0.1
 
         MS_OFLW_UNCERT:
             description:
-                short: Optical Flow Uncertainty
+                short: MicroStrain optical flow uncertainty
                 long: |
-                    The orientation of the device (Radians) with respect to the vehicle frame around the z axis
-                    Restart required
+                    The 1-sigma uncertainty (in m/s) for the X and Y axes, which will remain constant across all aiding measurements.
+                    The Z axis is not used for aiding.
             type: float
-            default: 0.0
+            reboot_required: true
+            default: 0.1
