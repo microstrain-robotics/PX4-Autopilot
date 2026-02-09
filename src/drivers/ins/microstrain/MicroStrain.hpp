@@ -86,6 +86,64 @@ using matrix::Vector2f;
 
 static constexpr float sq(float x) { return x * x; };
 
+class ClockBiasFilter
+{
+public:
+	explicit ClockBiasFilter(const double weight_in, const size_t dt_avg_size_in):
+		weight(weight_in), dt_avg_size(dt_avg_size_in)
+	{}
+
+	void update(const uint64_t source_time, const uint64_t target_time)
+	{
+		const int64_t dt = (int64_t)source_time - (int64_t)target_time;
+
+		if (!initialized) {
+			dt_sum += dt;
+			avg_count++;
+
+			if (avg_count >= dt_avg_size) {
+				bias_estimate = dt_sum / dt_avg_size;
+				initialized = true;
+
+				dt_sum = 0.0;
+				avg_count = 0;
+			}
+
+			return;
+		}
+
+		bias_estimate = bias_estimate * weight + dt * (1 - weight);
+	}
+
+	uint64_t getSyncedTime(const uint64_t mip_ref_time) const
+	{
+		if (!initialized) {
+			return hrt_absolute_time();
+		}
+
+		return uint64_t(bias_estimate + (int64_t)mip_ref_time);
+	}
+
+	int64_t getBias() const
+	{
+		return bias_estimate;
+	}
+
+	void reset()
+	{
+		initialized = false;
+		bias_estimate = 0.0;
+	}
+
+private:
+	float weight = 0.99f;
+	bool initialized = false;
+	int64_t bias_estimate = 0.0;
+	size_t dt_avg_size = 10;
+	size_t avg_count = 0;
+	int64_t dt_sum = 0;
+};
+
 class MicroStrain : public ModuleBase, public ModuleParams, public px4::ScheduledWorkItem
 {
 public:
@@ -223,6 +281,9 @@ private:
 		bool updated = false;
 	};
 
+	ClockBiasFilter timesync{0.99F, 100};
+	int64_t gps_ref_time_offset = 0;
+
 	mip_filter_gnss_dual_antenna_status_data dual_ant_stat{0};
 
 	uint16_t _supported_descriptors[1024] = {0};
@@ -274,7 +335,8 @@ private:
 		(ParamFloat<px4::params::MS_OFLW_OFF_Z>) _param_ms_oflow_offset_z,
 		(ParamFloat<px4::params::MS_EHEAD_YAW>) _param_ms_ehead_yaw,
 		(ParamFloat<px4::params::MS_EMAG_UNCERT>) _param_ms_emag_uncert,
-		(ParamFloat<px4::params::MS_OFLW_UNCERT>) _param_ms_oflow_uncert
+		(ParamFloat<px4::params::MS_OFLW_UNCERT>) _param_ms_oflow_uncert,
+		(ParamInt<px4::params::MS_TS_LPF_EN>) _param_ms_ts_lpf_en
 	)
 
 	// Sensor types needed for message creation / updating / publishing

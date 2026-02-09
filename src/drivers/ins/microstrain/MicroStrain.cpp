@@ -500,7 +500,7 @@ mip_cmd_result MicroStrain::configureImuMessageFormat()
 	PX4_DEBUG("Configuring IMU Message Format");
 
 	uint8_t num_imu_descriptors = 0;
-	mip_descriptor_rate imu_descriptors[5];
+	mip_descriptor_rate imu_descriptors[6];
 
 	// Get the base rate
 	uint16_t base_rate;
@@ -551,6 +551,16 @@ mip_cmd_result MicroStrain::configureImuMessageFormat()
 		PX4_DEBUG("IMU: GPS Time enabled");
 	}
 
+	if (supportsDescriptor(MIP_SENSOR_DATA_DESC_SET, MIP_DATA_DESC_SHARED_REFERENCE_TIME)
+	    && _param_ms_filter_rate_hz.get() > 0) {
+		const int max_param_rate = math::max(_param_ms_imu_rate_hz.get(), _param_ms_mag_rate_hz.get(),
+						     _param_ms_baro_rate_hz.get());
+		uint16_t gps_time_decimation = base_rate / max_param_rate;
+		imu_descriptors[num_imu_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_SHARED_REFERENCE_TIME, gps_time_decimation};
+		PX4_DEBUG("IMU: Ref Time enabled");
+	}
+
+
 	// Write the settings
 	res = writeMessageFormat(MIP_SENSOR_DATA_DESC_SET, num_imu_descriptors,
 				 imu_descriptors);
@@ -563,7 +573,7 @@ mip_cmd_result MicroStrain::configureFilterMessageFormat()
 	PX4_DEBUG("Configuring Filter Message Format");
 
 	uint8_t num_filter_descriptors = 0;
-	mip_descriptor_rate filter_descriptors[11];
+	mip_descriptor_rate filter_descriptors[12];
 
 	// Get the base rate
 	uint16_t base_rate;
@@ -650,6 +660,12 @@ mip_cmd_result MicroStrain::configureFilterMessageFormat()
 		PX4_DEBUG("Filter: GPS Time enabled");
 	}
 
+	if (supportsDescriptor(MIP_FILTER_DATA_DESC_SET, MIP_DATA_DESC_SHARED_REFERENCE_TIME)
+	    && _param_ms_filter_rate_hz.get() > 0) {
+		filter_descriptors[num_filter_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_SHARED_REFERENCE_TIME, filter_decimation};
+		PX4_DEBUG("Filter: Ref Time enabled");
+	}
+
 	// Write the settings
 	res = writeMessageFormat(MIP_FILTER_DATA_DESC_SET, num_filter_descriptors,
 				 filter_descriptors);
@@ -667,7 +683,7 @@ mip_cmd_result MicroStrain::configureGnssMessageFormat(uint8_t descriptor_set)
 	PX4_DEBUG("Configuring GNSS Message Format");
 
 	uint8_t num_gnss_descriptors = 0;
-	mip_descriptor_rate gnss_descriptors[6];
+	mip_descriptor_rate gnss_descriptors[7];
 
 	// Get the base rate
 	uint16_t base_rate;
@@ -1177,9 +1193,11 @@ void MicroStrain::sensorCallback(void *user, const mip_packet *packet, mip::Time
 	SensorSample<mip_sensor_scaled_gyro_data> gyro;
 	SensorSample<mip_sensor_scaled_mag_data> mag;
 	SensorSample<mip_sensor_scaled_pressure_data> baro;
+	SensorSample<mip_shared_gps_timestamp_data> s_gps_time;
+	SensorSample<mip_shared_reference_timestamp_data> ref_time;
 
 	// Iterate through the packet and extract based on the descriptor present
-	auto t = hrt_absolute_time();
+	uint64_t t = hrt_absolute_time();
 
 	for (mip_field field = mip_field_first_from_packet(packet); mip_field_is_valid(&field); mip_field_next(&field)) {
 		switch (mip_field_field_descriptor(&field)) {
@@ -1204,9 +1222,34 @@ void MicroStrain::sensorCallback(void *user, const mip_packet *packet, mip::Time
 			baro.updated = true;
 			break;
 
+		case MIP_DATA_DESC_SHARED_GPS_TIME:
+			extract_mip_shared_gps_timestamp_data_from_field(&field, &s_gps_time.sample);
+			s_gps_time.updated = true;
+			break;
+
+		case MIP_DATA_DESC_SHARED_REFERENCE_TIME:
+			extract_mip_shared_gps_timestamp_data_from_field(&field, &ref_time.sample);
+			ref_time.updated = true;
+			break;
+
 		default:
 			break;
 		}
+	}
+
+	if (ref->_param_ms_ts_lpf_en.get()) {
+
+		if (ref_time.updated) {
+			ref->timesync.update(t, ref_time.sample.nanoseconds / 1000ULL);
+		}
+
+		if (ref_time.updated && s_gps_time.updated && s_gps_time.sample.valid_flags == 3) {
+			ref->gps_ref_time_offset = (ref_time.sample.nanoseconds / 1000ULL) - (s_gps_time.sample.tow * 1000000ULL);
+		}
+
+		uint64_t synced_time = (uint64_t)(ref->timesync.getSyncedTime(ref_time.sample.nanoseconds / 1000ULL) - 2500ULL);
+
+		t = min(t, synced_time);
 	}
 
 	// Publish only if the corresponding data was extracted from the packet
@@ -1251,9 +1294,11 @@ void MicroStrain::filterCallback(void *user, const mip_packet *packet, mip::Time
 	SensorSample<mip_filter_velocity_ned_uncertainty_data> vel_uncert;
 	SensorSample<mip_filter_euler_angles_uncertainty_data> att_euler_uncert;
 	SensorSample<mip_filter_linear_accel_data> lin_accel;
+	SensorSample<mip_shared_gps_timestamp_data> gps_time;
+	SensorSample<mip_shared_reference_timestamp_data> ref_time;
 
 	// Iterate through the packet and extract based on the descriptor present
-	auto t = hrt_absolute_time();
+	uint64_t t = hrt_absolute_time();
 
 	for (mip_field field = mip_field_first_from_packet(packet); mip_field_is_valid(&field); mip_field_next(&field)) {
 		switch (mip_field_field_descriptor(&field)) {
@@ -1306,6 +1351,16 @@ void MicroStrain::filterCallback(void *user, const mip_packet *packet, mip::Time
 			extract_mip_filter_gnss_dual_antenna_status_data_from_field(&field, &ref->dual_ant_stat);
 			break;
 
+		case MIP_DATA_DESC_SHARED_GPS_TIME:
+			extract_mip_shared_gps_timestamp_data_from_field(&field, &gps_time.sample);
+			gps_time.updated = true;
+			break;
+
+		case MIP_DATA_DESC_SHARED_REFERENCE_TIME:
+			extract_mip_shared_gps_timestamp_data_from_field(&field, &ref_time.sample);
+			ref_time.updated = true;
+			break;
+
 		default:
 			break;
 		}
@@ -1319,6 +1374,12 @@ void MicroStrain::filterCallback(void *user, const mip_packet *packet, mip::Time
 	bool vehicle_odometry_valid = pos_llh.updated && att_quat.updated && vel_ned.updated && llh_uncert.updated
 				      && vel_uncert.updated && att_euler_uncert.updated && ang_rate.updated;
 	bool estimator_status_valid = stat.updated && llh_uncert.updated;
+
+	if (ref->_param_ms_ts_lpf_en.get()) {
+
+		uint64_t synced_time = (uint64_t)(ref->timesync.getSyncedTime(ref_time.sample.nanoseconds / 1000ULL) - 4000ULL);
+		t = min(t, synced_time);
+	}
 
 	if (vehicle_global_position_valid) {
 		vehicle_global_position_s gp{0};
@@ -1365,7 +1426,7 @@ void MicroStrain::filterCallback(void *user, const mip_packet *packet, mip::Time
 		att_data.q[3] = att_quat.sample.q[3];
 
 		// ------- Fields we cannot obtain -------
-		att_data.delta_q_reset[0] = 0;
+		att_data.delta_q_reset[0] = 0; //check
 		att_data.delta_q_reset[0] = 0;
 		att_data.delta_q_reset[0] = 0;
 		att_data.delta_q_reset[0] = 0;
@@ -1607,9 +1668,8 @@ void MicroStrain::gnssCallback(void *user, const mip_packet *packet, mip::Timest
 	SensorSample<mip_gnss_satellite_status_data> sat;
 	SensorSample<mip_gnss_fix_info_data> fix_info;
 
-
 	// Iterate through the packet and extract based on the descriptor present
-	auto t = hrt_absolute_time();
+	uint64_t t = hrt_absolute_time();
 
 	for (mip_field field = mip_field_first_from_packet(packet); mip_field_is_valid(&field); mip_field_next(&field)) {
 		switch (mip_field_field_descriptor(&field)) {
@@ -1648,6 +1708,12 @@ void MicroStrain::gnssCallback(void *user, const mip_packet *packet, mip::Timest
 			break;
 
 		}
+	}
+
+	if (ref->_param_ms_ts_lpf_en.get()) {
+
+		uint64_t synced_time = (uint64_t)(ref->timesync.getSyncedTime(gps_time.sample.tow * 1000000ULL + ref->gps_ref_time_offset) - 3500ULL);
+		t = min(t, synced_time);
 	}
 
 	bool gnss_valid = pos_llh.updated && dop.updated && vel_ned.updated && gps_leap_sec.updated && fix_info.updated;

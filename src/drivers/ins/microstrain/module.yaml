@@ -389,3 +389,15 @@ parameters:
             type: float
             reboot_required: true
             default: 0.1
+
+        MS_TS_LPF_EN:
+            description:
+                short: MicroStrain Timestamp Low Pass Filter Enable
+                long: |
+                    Enables setting of the timestamp sample for the different topics through a LPF rather than time of arrival.
+            type: enum
+            values:
+                0: Disabled
+                1: Enabled
+            reboot_required: true
+            default: 0
