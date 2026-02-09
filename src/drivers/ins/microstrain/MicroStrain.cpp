@@ -876,6 +876,8 @@ mip_cmd_result MicroStrain::configureGnssAiding()
 				mip_cmd_result res1 = mip_filter_write_multi_antenna_offset(&_device, 1, gnss_antenna_offset1);
 				mip_cmd_result res2 = mip_filter_write_multi_antenna_offset(&_device, 2, gnss_antenna_offset2);
 
+				_ext_pos_vel_aiding = false;
+
 				if (!mip_cmd_result_is_ack(res1)) {
 					PX4_ERR("Could not write multi antenna (1) offsets");
 					return res1;
