@@ -115,7 +115,7 @@ public:
 		bias_estimate = bias_estimate * weight + dt * (1 - weight);
 	}
 
-	uint64_t getSyncedTime(const uint64_t mip_ref_time) const
+	uint64_t getHrtTime(const uint64_t mip_ref_time) const
 	{
 		if (!initialized) {
 			return hrt_absolute_time();
@@ -281,7 +281,7 @@ private:
 		bool updated = false;
 	};
 
-	ClockBiasFilter timesync{0.99F, 100};
+	ClockBiasFilter clock_bias_estimator{0.99F, 100};
 	int64_t gps_ref_time_offset = 0;
 
 	mip_filter_gnss_dual_antenna_status_data dual_ant_stat{0};

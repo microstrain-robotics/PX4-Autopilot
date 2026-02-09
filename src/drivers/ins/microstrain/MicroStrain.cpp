@@ -1241,16 +1241,18 @@ void MicroStrain::sensorCallback(void *user, const mip_packet *packet, mip::Time
 
 	if (ref->_param_ms_ts_lpf_en.get()) {
 
+		// Update the clock bias estimator
 		if (ref_time.updated) {
-			ref->timesync.update(t, ref_time.sample.nanoseconds / 1000ULL);
+			ref->clock_bias_estimator.update(t, ref_time.sample.nanoseconds / 1000ULL);
 		}
 
+		// Compute INS reference time offset relative to GPS time-of-week (ref_us - tow_us) when both are valid.
 		if (ref_time.updated && s_gps_time.updated && s_gps_time.sample.valid_flags == 3) {
 			ref->gps_ref_time_offset = (ref_time.sample.nanoseconds / 1000ULL) - (s_gps_time.sample.tow * 1000000ULL);
 		}
 
-		uint64_t synced_time = (uint64_t)(ref->timesync.getSyncedTime(ref_time.sample.nanoseconds / 1000ULL) - 2500ULL);
-
+		// Approximate HRT timestamp for the sample's reference time, compensating ~2.5 ms latency (sensor motion to message and serial transport).
+		uint64_t synced_time = (uint64_t)(ref->clock_bias_estimator.getHrtTime(ref_time.sample.nanoseconds / 1000ULL) - 2500ULL);
 		t = min(t, synced_time);
 	}
 
@@ -1378,9 +1380,9 @@ void MicroStrain::filterCallback(void *user, const mip_packet *packet, mip::Time
 	bool estimator_status_valid = stat.updated && llh_uncert.updated;
 
 	if (ref->_param_ms_ts_lpf_en.get()) {
-
-		uint64_t synced_time = (uint64_t)(ref->timesync.getSyncedTime(ref_time.sample.nanoseconds / 1000ULL) - 4000ULL);
-		t = min(t, synced_time);
+		// Approximate HRT timestamp for the sample's reference time, compensating ~4 ms latency (sensor motion to message and serial transport).
+		uint64_t ts_sample = (uint64_t)(ref->clock_bias_estimator.getHrtTime(ref_time.sample.nanoseconds / 1000ULL) - 4000ULL);
+		t = min(t, ts_sample);
 	}
 
 	if (vehicle_global_position_valid) {
@@ -1428,10 +1430,10 @@ void MicroStrain::filterCallback(void *user, const mip_packet *packet, mip::Time
 		att_data.q[3] = att_quat.sample.q[3];
 
 		// ------- Fields we cannot obtain -------
-		att_data.delta_q_reset[0] = 0; //check
 		att_data.delta_q_reset[0] = 0;
-		att_data.delta_q_reset[0] = 0;
-		att_data.delta_q_reset[0] = 0;
+		att_data.delta_q_reset[1] = 0;
+		att_data.delta_q_reset[2] = 0;
+		att_data.delta_q_reset[3] = 0;
 		att_data.quat_reset_counter = 0;
 		// ---------------------------------------
 
@@ -1714,8 +1716,11 @@ void MicroStrain::gnssCallback(void *user, const mip_packet *packet, mip::Timest
 
 	if (ref->_param_ms_ts_lpf_en.get()) {
 
-		uint64_t synced_time = (uint64_t)(ref->timesync.getSyncedTime(gps_time.sample.tow * 1000000ULL + ref->gps_ref_time_offset) - 3500ULL);
-		t = min(t, synced_time);
+		// Approximate HRT timestamp corresponding to the sample's GPS time.
+		if (gps_time.updated && gps_time.sample.valid_flags == 3) {
+			uint64_t ts_sample = (uint64_t)(ref->clock_bias_estimator.getHrtTime(gps_time.sample.tow * 1000000ULL + ref->gps_ref_time_offset));
+			t = min(t, ts_sample);
+		}
 	}
 
 	bool gnss_valid = pos_llh.updated && dop.updated && vel_ned.updated && gps_leap_sec.updated && fix_info.updated;
