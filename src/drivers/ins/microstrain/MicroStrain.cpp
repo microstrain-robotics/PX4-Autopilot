@@ -400,6 +400,8 @@ mip_cmd_result MicroStrain::getBaseRate(uint8_t descriptor_set, uint16_t *base_r
 
 		case MIP_GNSS1_DATA_DESC_SET:
 		case MIP_GNSS2_DATA_DESC_SET:
+		case MIP_GNSS4_DATA_DESC_SET:
+		case MIP_GNSS5_DATA_DESC_SET:
 		case MIP_GNSS_DATA_DESC_SET: {
 				if (supportsDescriptor(descriptor_set, MIP_CMD_DESC_3DM_GET_GNSS_BASE_RATE)) {
 					res = mip_3dm_gps_get_base_rate(&_device, base_rate);
@@ -460,6 +462,8 @@ mip_cmd_result MicroStrain::writeMessageFormat(uint8_t descriptor_set, uint8_t n
 
 		case MIP_GNSS1_DATA_DESC_SET:
 		case MIP_GNSS2_DATA_DESC_SET:
+		case MIP_GNSS4_DATA_DESC_SET:
+		case MIP_GNSS5_DATA_DESC_SET:
 		case MIP_GNSS_DATA_DESC_SET: {
 				if (supportsDescriptor(descriptor_set, MIP_CMD_DESC_3DM_GNSS_MESSAGE_FORMAT)) {
 					res = mip_3dm_write_gps_message_format(&_device, num_descriptors, descriptors);
@@ -1098,7 +1102,7 @@ bool MicroStrain::initializeIns()
 		MS_PX4_ERROR(res, "Could not write GNSS1 message format");
 	}
 
-	// Register data callbacks
+	// Register data callbacks for GNSS1
 	mip_interface_register_packet_callback(&_device, &_gnss_data_handler[0], MIP_GNSS1_DATA_DESC_SET, false,
 					       &gnssCallback,
 					       this);
@@ -1110,8 +1114,29 @@ bool MicroStrain::initializeIns()
 		MS_PX4_ERROR(res, "Could not write GNSS2 message format");
 	}
 
-	// Register data callbacks
+	// Register data callbacks for GNSS2
 	mip_interface_register_packet_callback(&_device, &_gnss_data_handler[1], MIP_GNSS2_DATA_DESC_SET, false,
+					       &gnssCallback,
+					       this);
+
+	// Configure the GNSS4 message format based on what descriptors are supported
+	if (!mip_cmd_result_is_ack(res = configureGnssMessageFormat(MIP_GNSS4_DATA_DESC_SET))) {
+		MS_PX4_ERROR(res, "Could not write GNSS4 message format");
+	}
+
+	// Register data callbacks for GNSS4. Uses case 3 in the event we add support for  GNSS3 in the future which
+	// would logically take case 2 for clean sequential logic
+	mip_interface_register_packet_callback(&_device, &_gnss_data_handler[3], MIP_GNSS4_DATA_DESC_SET, false,
+					       &gnssCallback,
+					       this);
+
+	// Configure the GNSS5 message format based on what descriptors are supported
+	if (!mip_cmd_result_is_ack(res = configureGnssMessageFormat(MIP_GNSS5_DATA_DESC_SET))) {
+		MS_PX4_ERROR(res, "Could not write GNSS5 message format");
+	}
+
+	// Register data callbacks for GNSS5. Uses case 4 in the event we add GNSS3 in the future
+	mip_interface_register_packet_callback(&_device, &_gnss_data_handler[4], MIP_GNSS5_DATA_DESC_SET, false,
 					       &gnssCallback,
 					       this);
 
@@ -1655,12 +1680,14 @@ void MicroStrain::gnssCallback(void *user, const mip_packet *packet, mip::Timest
 {
 	MicroStrain *ref = static_cast<MicroStrain *>(user);
 
-	int instance = 0;
+	int instance = 0; // default
 
 	assert((mip_packet_descriptor_set(packet) == MIP_GNSS1_DATA_DESC_SET)
-	       || (mip_packet_descriptor_set(packet) == MIP_GNSS2_DATA_DESC_SET));
+	       || (mip_packet_descriptor_set(packet) == MIP_GNSS2_DATA_DESC_SET)
+	       || (mip_packet_descriptor_set(packet) == MIP_GNSS4_DATA_DESC_SET)
+	       || (mip_packet_descriptor_set(packet) == MIP_GNSS5_DATA_DESC_SET));
 
-	if (mip_packet_descriptor_set(packet) == MIP_GNSS2_DATA_DESC_SET) {
+	if (mip_packet_descriptor_set(packet) == MIP_GNSS2_DATA_DESC_SET || mip_packet_descriptor_set(packet) == MIP_GNSS5_DATA_DESC_SET) {
 		instance = 1;
 	}
 

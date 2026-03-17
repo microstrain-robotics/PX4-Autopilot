@@ -296,7 +296,7 @@ private:
 	// Handlers
 	mip_dispatch_handler _sensor_data_handler;
 	mip_dispatch_handler _filter_data_handler;
-	mip_dispatch_handler _gnss_data_handler[2];
+	mip_dispatch_handler _gnss_data_handler[6];
 
 	char _port[128];
 
@@ -347,7 +347,7 @@ private:
 
 	// Must publish to prevent sensor stale failure (sensors module)
 	uORB::PublicationMulti<sensor_baro_s> _sensor_baro_pub{ORB_ID(sensor_baro)};
-	uORB::PublicationMulti<sensor_gps_s> _sensor_gps_pub[2] {ORB_ID(sensor_gps), ORB_ID(sensor_gps)};
+	uORB::PublicationMulti<sensor_gps_s> _sensor_gps_pub[5] {ORB_ID(sensor_gps), ORB_ID(sensor_gps)};
 	uORB::Publication<sensor_selection_s> _sensor_selection_pub{ORB_ID(sensor_selection)};
 
 	uORB::Publication<vehicle_global_position_s> _vehicle_global_position_pub;
