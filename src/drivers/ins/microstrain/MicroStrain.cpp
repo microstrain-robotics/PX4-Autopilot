@@ -816,7 +816,7 @@ mip_cmd_result MicroStrain::configureGnssAiding()
 		// Check to see if sending GNSS position and velocity as an aiding measurement is supported
 		bool pos_aiding = supportsDescriptor(MIP_AIDING_CMD_DESC_SET, MIP_CMD_DESC_AIDING_POS_LLH);
 		bool vel_aiding = supportsDescriptor(MIP_AIDING_CMD_DESC_SET, MIP_CMD_DESC_AIDING_VEL_NED);
-		_ext_pos_vel_aiding = pos_aiding && vel_aiding;
+		_ext_pos_vel_aiding = pos_aiding && vel_aiding; && _param_ms_gnss_aid_src_ctrl.get() == MIP_FILTER_GNSS_SOURCE_COMMAND_SOURCE_EXT;
 
 		if (!_ext_pos_vel_aiding) {
 			PX4_ERR("Sending GNSS pos/vel aiding messages is not supported");
@@ -881,6 +881,8 @@ mip_cmd_result MicroStrain::configureGnssAiding()
 		}
 	}
 
+	
+
 	// Otherwise sets up the aiding frame
 	else if (supportsDescriptor(MIP_AIDING_CMD_DESC_SET, MIP_CMD_DESC_AIDING_FRAME_CONFIG)) {
 		if (!mip_cmd_result_is_ack(res = mip_aiding_write_frame_config(&_device, 1,
@@ -888,6 +890,11 @@ mip_cmd_result MicroStrain::configureGnssAiding()
 						 gnss_antenna_offset1, &rotation_gnss))) {
 			PX4_ERR("Could not write aiding frame config");
 			return res;
+		}
+		if (_param_ms_gnss_aid_protocol.get() != 0) {
+			PX4_INFO("Using Receiver Specific GNSS aiding protocol");
+			_ext_pos_vel_aiding = false;
+			_dual_antenna
 		}
 	}
 
@@ -902,6 +909,15 @@ mip_cmd_result MicroStrain::configureAidingSources()
 {
 	PX4_DEBUG("Configuring aiding sources");
 	mip_cmd_result res;
+
+	// Selectively enables dual antenna heading as an aiding measurement
+	if (!mip_cmd_result_is_ack(res = enableAidingSource(
+			MIP_FILTER_AIDING_MEASUREMENT_ENABLE_COMMAND_AIDING_SOURCE_GNSS_HEADING,
+			_param_ms_int_heading_en.get(),
+			0, 0, nullptr, mip_aiding_frame_config_command_rotation{0},
+			0, _int_aiding, "dual antenna heading"))) {
+		return res;
+	}
 
 	// Selectively turn on internal magnetometer as an aiding source
 	if (!mip_cmd_result_is_ack(res = enableAidingSource(
