@@ -36,16 +36,27 @@ set(MIP_SDK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/mip_sdk)
 px4_add_git_submodule(TARGET git_mip PATH ${MIP_SDK_DIR})
 
 # Set some options for the MIP SDK which we will reset after building.
-set(MIP_USE_TCP "OFF" CACHE BOOL "" FORCE)
-set(MIP_DISABLE_CPP "ON" CACHE BOOL "" FORCE)
-set(BUILD_EXAMPLES "OFF" CACHE BOOL "" FORCE)
-set(BUILD_TESTING "OFF" CACHE BOOL "" FORCE)
+set(MICROSTRAIN_ENABLE_TCP "OFF" CACHE BOOL "" FORCE)
+set(MICROSTRAIN_ENABLE_CPP "OFF" CACHE BOOL "" FORCE)
+set(MICROSTRAIN_BUILD_EXAMPLES "OFF" CACHE BOOL "" FORCE)
+set(MICROSTRAIN_BUILD_TESTING "OFF" CACHE BOOL "" FORCE)
+
 add_subdirectory(mip_sdk)
+
+if(PX4_PLATFORM MATCHES "nuttx")
+    foreach(t microstrain mip)
+        if(TARGET ${t})
+            add_dependencies(${t} nuttx_context)
+        endif()
+    endforeach()
+endif()
+
 
 px4_add_module(
 	MODULE drivers__ins__microstrain
 	MAIN microstrain
 	COMPILE_FLAGS
+	# -DDEBUG_BUILD
 	SRCS
 		MicroStrain.cpp
 		MicroStrain.hpp

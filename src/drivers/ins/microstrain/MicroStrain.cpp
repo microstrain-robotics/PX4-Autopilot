@@ -151,8 +151,8 @@ MicroStrain::~MicroStrain()
 }
 
 bool mipInterfaceUserRecvFromDevice(mip_interface *device, uint8_t *buffer, size_t max_length,
-				    timeout_type wait_time,
-				    size_t *out_length, timestamp_type *timestamp_out)
+				    mip_timeout wait_time, bool from_cmd,
+				    size_t *out_length, mip_timestamp *timestamp_out)
 {
 	(void)device;
 
@@ -231,7 +231,7 @@ int MicroStrain::connectAtBaud(int32_t baud)
 	PX4_INFO("Serial Port %s with baud of %lu baud", (device_uart.isOpen() ? "CONNECTED" : "NOT CONNECTED"), baud);
 
 	// Re-init the interface with the correct timeouts
-	mip_interface_init(&_device, _parse_buffer, sizeof(_parse_buffer), mip_timeout_from_baudrate(baud) * 1_ms, 250_ms,
+	mip_interface_init(&_device, mip_timeout_from_baudrate(baud) * 1_ms, 250_ms,
 			   &mipInterfaceUserSendToDevice, &mipInterfaceUserRecvFromDevice, &mip_interface_default_update, NULL);
 
 	if (!mip_cmd_result_is_ack(forceIdle())) {
@@ -398,7 +398,7 @@ mip_cmd_result MicroStrain::getBaseRate(uint8_t descriptor_set, uint16_t *base_r
 		case MIP_GNSS5_DATA_DESC_SET:
 		case MIP_GNSS_DATA_DESC_SET: {
 				if (supportsDescriptor(descriptor_set, MIP_CMD_DESC_3DM_GET_GNSS_BASE_RATE)) {
-					res = mip_3dm_gps_get_base_rate(&_device, base_rate);
+					res = mip_3dm_gnss_get_base_rate(&_device, base_rate);
 
 				} else {
 					PX4_ERR("GNSS base rate command is not supported");
@@ -431,7 +431,7 @@ mip_cmd_result MicroStrain::getBaseRate(uint8_t descriptor_set, uint16_t *base_r
 }
 
 mip_cmd_result MicroStrain::writeMessageFormat(uint8_t descriptor_set, uint8_t num_descriptors,
-		const mip::DescriptorRate *descriptors)
+		const mip_descriptor_rate *descriptors)
 {
 	mip_cmd_result res;
 
@@ -460,7 +460,7 @@ mip_cmd_result MicroStrain::writeMessageFormat(uint8_t descriptor_set, uint8_t n
 		case MIP_GNSS5_DATA_DESC_SET:
 		case MIP_GNSS_DATA_DESC_SET: {
 				if (supportsDescriptor(descriptor_set, MIP_CMD_DESC_3DM_GNSS_MESSAGE_FORMAT)) {
-					res = mip_3dm_write_gps_message_format(&_device, num_descriptors, descriptors);
+					res = mip_3dm_write_gnss_message_format(&_device, num_descriptors, descriptors);
 
 				} else {
 					PX4_ERR("GNSS messaage format command is not supported");
@@ -729,7 +729,8 @@ mip_cmd_result MicroStrain::configureGnssMessageFormat(uint8_t descriptor_set)
 	return res;
 }
 
-mip_cmd_result MicroStrain::configureAidingMeasurement(uint16_t aiding_source, bool enable)
+mip_cmd_result MicroStrain::configureAidingMeasurement(mip_filter_aiding_measurement_enable_command_aiding_source
+		aiding_source, bool enable)
 {
 	// If the device doesn’t support aiding measurements
 	if (!supportsDescriptor(MIP_FILTER_CMD_DESC_SET, MIP_CMD_DESC_FILTER_AIDING_MEASUREMENT_ENABLE)) {
@@ -750,10 +751,10 @@ mip_cmd_result MicroStrain::configureAidingMeasurement(uint16_t aiding_source, b
 	return res;
 }
 
-mip_cmd_result MicroStrain::enableAidingSource(uint16_t source,
+mip_cmd_result MicroStrain::enableAidingSource(mip_filter_aiding_measurement_enable_command_aiding_source source,
 		bool enabled,
 		uint8_t frame_id,
-		uint8_t frame_format,
+		mip_aiding_frame_config_command_format frame_format,
 		const float offset[3],
 		mip_aiding_frame_config_command_rotation rotation,
 		uint16_t aiding_cmd_desc,
@@ -816,7 +817,7 @@ mip_cmd_result MicroStrain::configureGnssAiding()
 		// Check to see if sending GNSS position and velocity as an aiding measurement is supported
 		bool pos_aiding = supportsDescriptor(MIP_AIDING_CMD_DESC_SET, MIP_CMD_DESC_AIDING_POS_LLH);
 		bool vel_aiding = supportsDescriptor(MIP_AIDING_CMD_DESC_SET, MIP_CMD_DESC_AIDING_VEL_NED);
-		_ext_pos_vel_aiding = pos_aiding && vel_aiding; && _param_ms_gnss_aid_src_ctrl.get() == MIP_FILTER_GNSS_SOURCE_COMMAND_SOURCE_EXT;
+		_ext_pos_vel_aiding = pos_aiding && vel_aiding;
 
 		if (!_ext_pos_vel_aiding) {
 			PX4_ERR("Sending GNSS pos/vel aiding messages is not supported");
@@ -829,7 +830,8 @@ mip_cmd_result MicroStrain::configureGnssAiding()
 
 		// Sets up the GNSS aiding source
 		if (supportsDescriptor(MIP_FILTER_CMD_DESC_SET, MIP_CMD_DESC_FILTER_GNSS_SOURCE_CONTROL)) {
-			if (!mip_cmd_result_is_ack(res = mip_filter_write_gnss_source(&_device, (uint8_t)_param_ms_gnss_aid_src_ctrl.get()))) {
+			if (!mip_cmd_result_is_ack(res = mip_filter_write_gnss_source(&_device,
+							 (mip_filter_gnss_source_command_source)_param_ms_gnss_aid_src_ctrl.get()))) {
 				PX4_ERR("Could not write the gnss aiding source");
 				return res;
 			}
@@ -875,13 +877,13 @@ mip_cmd_result MicroStrain::configureGnssAiding()
 		if (!mip_cmd_result_is_ack(res = enableAidingSource(
 				MIP_FILTER_AIDING_MEASUREMENT_ENABLE_COMMAND_AIDING_SOURCE_GNSS_HEADING,
 				_param_ms_int_heading_en.get(),
-				0, 0, nullptr, mip_aiding_frame_config_command_rotation{0},
+				0, MIP_AIDING_FRAME_CONFIG_COMMAND_FORMAT_EULER, nullptr, mip_aiding_frame_config_command_rotation{0},
 				0, _int_aiding, "dual antenna heading"))) {
 			return res;
 		}
 	}
 
-	
+
 
 	// Otherwise sets up the aiding frame
 	else if (supportsDescriptor(MIP_AIDING_CMD_DESC_SET, MIP_CMD_DESC_AIDING_FRAME_CONFIG)) {
@@ -891,10 +893,10 @@ mip_cmd_result MicroStrain::configureGnssAiding()
 			PX4_ERR("Could not write aiding frame config");
 			return res;
 		}
-		if (_param_ms_gnss_aid_protocol.get() != 0) {
+
+		if (_param_ms_gnss_aid_ptcl.get() != 0) {
 			PX4_INFO("Using Receiver Specific GNSS aiding protocol");
 			_ext_pos_vel_aiding = false;
-			_dual_antenna
 		}
 	}
 
@@ -914,7 +916,7 @@ mip_cmd_result MicroStrain::configureAidingSources()
 	if (!mip_cmd_result_is_ack(res = enableAidingSource(
 			MIP_FILTER_AIDING_MEASUREMENT_ENABLE_COMMAND_AIDING_SOURCE_GNSS_HEADING,
 			_param_ms_int_heading_en.get(),
-			0, 0, nullptr, mip_aiding_frame_config_command_rotation{0},
+			0, MIP_AIDING_FRAME_CONFIG_COMMAND_FORMAT_EULER, nullptr, mip_aiding_frame_config_command_rotation{0},
 			0, _int_aiding, "dual antenna heading"))) {
 		return res;
 	}
@@ -923,7 +925,7 @@ mip_cmd_result MicroStrain::configureAidingSources()
 	if (!mip_cmd_result_is_ack(res = enableAidingSource(
 			MIP_FILTER_AIDING_MEASUREMENT_ENABLE_COMMAND_AIDING_SOURCE_MAGNETOMETER,
 			_param_ms_int_mag_en.get(),
-			0, 0, nullptr, mip_aiding_frame_config_command_rotation{0},
+			0, MIP_AIDING_FRAME_CONFIG_COMMAND_FORMAT_EULER, nullptr, mip_aiding_frame_config_command_rotation{0},
 			0, _int_aiding, "internal magnetometer"))) {
 		return res;
 	}
@@ -942,11 +944,11 @@ mip_cmd_result MicroStrain::configureAidingSources()
 
 	// Selectively turn on body frame velocity as an aiding source
 	if (!mip_cmd_result_is_ack(res = enableAidingSource(
-			MIP_FILTER_AIDING_MEASUREMENT_ENABLE_COMMAND_AIDING_SOURCE_VEHICLE_FRAME_VEL,
+			MIP_FILTER_AIDING_MEASUREMENT_ENABLE_COMMAND_AIDING_SOURCE_BODY_FRAME_VEL,
 			_param_ms_ext_opt_flow_en.get(),
 			3, MIP_AIDING_FRAME_CONFIG_COMMAND_FORMAT_EULER,
 			optical_flow_offset, rotation_oflow,
-			MIP_CMD_DESC_AIDING_VEL_ODOM,
+			MIP_CMD_DESC_AIDING_VEL_BODY_FRAME,
 			_ext_optical_flow_aiding,
 			"optical flow"))) {
 		return res;
@@ -1166,7 +1168,7 @@ bool MicroStrain::initializeIns()
 	return true;
 }
 
-void MicroStrain::sensorCallback(void *user, const mip_packet *packet, mip::Timestamp timestamp)
+void MicroStrain::sensorCallback(void *user, const mip_packet_view *packet, mip_timestamp timestamp)
 {
 	MicroStrain *ref = static_cast<MicroStrain *>(user);
 
@@ -1180,7 +1182,7 @@ void MicroStrain::sensorCallback(void *user, const mip_packet *packet, mip::Time
 	// Iterate through the packet and extract based on the descriptor present
 	auto t = hrt_absolute_time();
 
-	for (mip_field field = mip_field_first_from_packet(packet); mip_field_is_valid(&field); mip_field_next(&field)) {
+	for (mip_field_view field = mip_field_first_from_packet(packet); mip_field_is_valid(&field); mip_field_next(&field)) {
 		switch (mip_field_field_descriptor(&field)) {
 
 		case MIP_DATA_DESC_SENSOR_ACCEL_SCALED:
@@ -1235,7 +1237,7 @@ void MicroStrain::sensorCallback(void *user, const mip_packet *packet, mip::Time
 	}
 }
 
-void MicroStrain::filterCallback(void *user, const mip_packet *packet, mip::Timestamp timestamp)
+void MicroStrain::filterCallback(void *user, const mip_packet_view *packet, mip_timestamp timestamp)
 {
 	MicroStrain *ref = static_cast<MicroStrain *>(user);
 
@@ -1254,7 +1256,7 @@ void MicroStrain::filterCallback(void *user, const mip_packet *packet, mip::Time
 	// Iterate through the packet and extract based on the descriptor present
 	auto t = hrt_absolute_time();
 
-	for (mip_field field = mip_field_first_from_packet(packet); mip_field_is_valid(&field); mip_field_next(&field)) {
+	for (mip_field_view field = mip_field_first_from_packet(packet); mip_field_is_valid(&field); mip_field_next(&field)) {
 		switch (mip_field_field_descriptor(&field)) {
 		case MIP_DATA_DESC_FILTER_POS_LLH:
 			extract_mip_filter_position_llh_data_from_field(&field, &pos_llh.sample);
@@ -1585,7 +1587,7 @@ void MicroStrain::filterCallback(void *user, const mip_packet *packet, mip::Time
 	}
 }
 
-void MicroStrain::gnssCallback(void *user, const mip_packet *packet, mip::Timestamp timestamp)
+void MicroStrain::gnssCallback(void *user, const mip_packet_view *packet, mip_timestamp timestamp)
 {
 	MicroStrain *ref = static_cast<MicroStrain *>(user);
 
@@ -1612,7 +1614,7 @@ void MicroStrain::gnssCallback(void *user, const mip_packet *packet, mip::Timest
 	// Iterate through the packet and extract based on the descriptor present
 	auto t = hrt_absolute_time();
 
-	for (mip_field field = mip_field_first_from_packet(packet); mip_field_is_valid(&field); mip_field_next(&field)) {
+	for (mip_field_view field = mip_field_first_from_packet(packet); mip_field_is_valid(&field); mip_field_next(&field)) {
 		switch (mip_field_field_descriptor(&field)) {
 
 		case MIP_DATA_DESC_GNSS_POSITION_LLH:
@@ -1806,9 +1808,9 @@ void MicroStrain::sendGPSAiding()
 	// Sends GNSS position and velocity aiding data if they are both supported
 	if (_ext_pos_vel_aiding) {
 		float llh_uncertainty[3] = {gps.eph, gps.eph, gps.epv};
-		mip_aiding_llh_pos(&_device, &t, 1, gps.latitude_deg,
+		mip_aiding_pos_llh(&_device, &t, 1, gps.latitude_deg,
 				   gps.longitude_deg,
-				   gps.altitude_ellipsoid_m, llh_uncertainty, MIP_AIDING_LLH_POS_COMMAND_VALID_FLAGS_ALL);
+				   gps.altitude_ellipsoid_m, llh_uncertainty, MIP_AIDING_POS_LLH_COMMAND_VALID_FLAGS_ALL);
 
 		// Calculate the geoid height and update the low pass filter
 		const float _geoid_height = gps.altitude_ellipsoid_m - gps.altitude_msl_m;
@@ -1817,15 +1819,15 @@ void MicroStrain::sendGPSAiding()
 		if (gps.vel_ned_valid) {
 			float ned_v[3] = {gps.vel_n_m_s, gps.vel_e_m_s, gps.vel_d_m_s};
 			float ned_velocity_uncertainty[3] = {sqrtf(gps.s_variance_m_s), sqrtf(gps.s_variance_m_s), sqrtf(gps.s_variance_m_s)};
-			mip_aiding_ned_vel(&_device, &t, 1, ned_v, ned_velocity_uncertainty,
-					   MIP_AIDING_NED_VEL_COMMAND_VALID_FLAGS_ALL);
+			mip_aiding_vel_ned(&_device, &t, 1, ned_v, ned_velocity_uncertainty,
+					   MIP_AIDING_VEL_NED_COMMAND_VALID_FLAGS_ALL);
 		}
 	}
 
 	// Sends external heading aiding data if they are both supported
 	if (_ext_heading_aiding && PX4_ISFINITE(gps.heading)) {
 		float heading = gps.heading + gps.heading_offset;
-		mip_aiding_true_heading(&_device, &t, 4, heading, gps.heading_accuracy, 0xff);
+		mip_aiding_heading_true(&_device, &t, 4, heading, gps.heading_accuracy, 0xff);
 	}
 }
 
@@ -1864,7 +1866,7 @@ void MicroStrain::sendOpticalFlowAiding()
 	float vel[3] = {ofv.vel_body[0], ofv.vel_body[1], 0};
 	float uncert[3] = {opt_flow_uncert, opt_flow_uncert, 0.0};
 
-	mip_aiding_vehicle_fixed_frame_velocity(&_device, &t, 3, vel, uncert, 0x0003);
+	mip_aiding_vel_body_frame(&_device, &t, 3, vel, uncert, 0x0003);
 }
 
 void MicroStrain::sendAidingMeasurements()
@@ -1922,7 +1924,7 @@ void MicroStrain::Run()
 
 	}
 
-	mip_interface_update(&_device, false);
+	mip_interface_update(&_device, false, false);
 
 	//Initializes reference position if there is gps data
 	if (_vehicle_gps_position_sub.updated() && !_pos_ref.isInitialized()) {initializeRefPos();}
