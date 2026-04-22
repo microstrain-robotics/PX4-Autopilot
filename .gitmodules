@@ -99,7 +99,8 @@
 	branch = main
 [submodule "src/drivers/ins/microstrain/mip_sdk"]
 	path = src/drivers/ins/microstrain/mip_sdk
-	url = https://github.com/PX4/LORD-MicroStrain_mip_sdk.git
+	url = https://github.com/HBK-MicroStrain/mip_sdk
+	branch = feature/px4
 [submodule "src/drivers/ins/sbgecom/sbgECom"]
 	path = src/drivers/ins/sbgecom/sbgECom
 	url = https://github.com/PX4/sbgECom.git

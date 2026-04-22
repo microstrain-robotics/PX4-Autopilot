@@ -99,7 +99,7 @@ parameters:
             reboot_required: true
             default: 2
 
-        MS_GNSS_AID_PROTOCOL:
+        MS_GNSS_AID_PTCL:
             description:
                 short: MicroStrain GNSS aiding protocol control
                 long: |

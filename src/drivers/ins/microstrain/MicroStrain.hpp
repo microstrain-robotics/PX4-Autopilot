@@ -68,8 +68,8 @@
 #include <uORB/topics/estimator_status.h>
 
 
-#include "mip_sdk/src/mip/mip_all.h"
-#include "mip_sdk/src/mip/definitions/commands_aiding.h"
+#include "mip_sdk/src/c/mip/mip_all.h"
+#include "mip_sdk/src/c/mip/definitions/commands_aiding.h"
 
 using namespace mip::C;
 
@@ -167,11 +167,11 @@ public:
 	/* Callbacks */
 
 	// Sensor Callbacks
-	static void sensorCallback(void *user, const mip_packet *packet, mip::Timestamp timestamp);
+	static void sensorCallback(void *user, const mip_packet_view *packet, mip_timestamp timestamp);
 
-	static void filterCallback(void *user, const mip_packet *packet, mip::Timestamp timestamp);
+	static void filterCallback(void *user, const mip_packet_view *packet, mip_timestamp timestamp);
 
-	static void gnssCallback(void *user, const mip_packet *packet, mip::Timestamp timestamp);
+	static void gnssCallback(void *user, const mip_packet_view *packet, mip_timestamp timestamp);
 
 private:
 	/** @see ModuleBase */
@@ -203,14 +203,15 @@ private:
 	mip_cmd_result configureGnssMessageFormat(uint8_t descriptor_set);
 
 	mip_cmd_result writeMessageFormat(uint8_t descriptor_set, uint8_t num_descriptors,
-					  const mip::DescriptorRate *descriptors);
+					  const mip_descriptor_rate *descriptors);
 
-	mip_cmd_result configureAidingMeasurement(uint16_t aiding_source, bool enable);
+	mip_cmd_result configureAidingMeasurement(mip_filter_aiding_measurement_enable_command_aiding_source aiding_source,
+			bool enable);
 
-	mip_cmd_result enableAidingSource(uint16_t source,
+	mip_cmd_result enableAidingSource(mip_filter_aiding_measurement_enable_command_aiding_source source,
 					  bool enabled,
 					  uint8_t frame_id,
-					  uint8_t frame_format,
+					  mip_aiding_frame_config_command_format frame_format,
 					  const float offset[3],
 					  mip_aiding_frame_config_command_rotation rotation,
 					  uint16_t aiding_cmd_desc,
@@ -309,7 +310,7 @@ private:
 		(ParamInt<px4::params::MS_FILT_RATE_HZ>) _param_ms_filter_rate_hz,
 		(ParamInt<px4::params::MS_GNSS_RATE_HZ>) _param_ms_gnss_rate_hz,
 		(ParamInt<px4::params::MS_ALIGNMENT>) _param_ms_alignment,
-		(ParamInt<px4::params::MS_GNSS_AID_PROTOCOL>) _param_ms_aid_protocol,
+		(ParamInt<px4::params::MS_GNSS_AID_PTCL>) _param_ms_gnss_aid_ptcl,
 		(ParamInt<px4::params::MS_GNSS_AID_SRC>) _param_ms_gnss_aid_src_ctrl,
 		(ParamInt<px4::params::MS_INT_MAG_EN>) _param_ms_int_mag_en,
 		(ParamInt<px4::params::MS_EXT_MAG_EN>) _param_ms_ext_mag_en,
@@ -348,7 +349,7 @@ private:
 
 	// Must publish to prevent sensor stale failure (sensors module)
 	uORB::PublicationMulti<sensor_baro_s> _sensor_baro_pub{ORB_ID(sensor_baro)};
-	uORB::PublicationMulti<sensor_gps_s> _sensor_gps_pub[5] {ORB_ID(sensor_gps), ORB_ID(sensor_gps)};
+	uORB::PublicationMulti<sensor_gps_s> _sensor_gps_pub[2] {ORB_ID(sensor_gps), ORB_ID(sensor_gps)};
 	uORB::Publication<sensor_selection_s> _sensor_selection_pub{ORB_ID(sensor_selection)};
 
 	uORB::Publication<vehicle_global_position_s> _vehicle_global_position_pub;
