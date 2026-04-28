@@ -176,6 +176,8 @@ private:
 
 	void sendAidingMeasurements();
 
+	mip_cmd_result configureNova();
+
 	bool init();
 
 	uint32_t _dev_id{0};
@@ -247,7 +249,7 @@ private:
 		(ParamInt<px4::params::MS_FILT_RATE_HZ>) _param_ms_filter_rate_hz,
 		(ParamInt<px4::params::MS_GNSS_RATE_HZ>) _param_ms_gnss_rate_hz,
 		(ParamInt<px4::params::MS_ALIGNMENT>) _param_ms_alignment,
-		(ParamInt<px4::params::MS_GNSS_AID_PTCL>) _param_ms_gnss_aid_ptcl,
+		(ParamInt<px4::params::MS_DATA_CTRL>) _param_ms_data_ctrl,
 		(ParamInt<px4::params::MS_GNSS_AID_SRC>) _param_ms_gnss_aid_src_ctrl,
 		(ParamInt<px4::params::MS_INT_MAG_EN>) _param_ms_int_mag_en,
 		(ParamInt<px4::params::MS_EXT_MAG_EN>) _param_ms_ext_mag_en,

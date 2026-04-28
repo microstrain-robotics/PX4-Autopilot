@@ -394,8 +394,6 @@ mip_cmd_result MicroStrain::getBaseRate(uint8_t descriptor_set, uint16_t *base_r
 
 		case MIP_GNSS1_DATA_DESC_SET:
 		case MIP_GNSS2_DATA_DESC_SET:
-		case MIP_GNSS4_DATA_DESC_SET:
-		case MIP_GNSS5_DATA_DESC_SET:
 		case MIP_GNSS_DATA_DESC_SET: {
 				if (supportsDescriptor(descriptor_set, MIP_CMD_DESC_3DM_GET_GNSS_BASE_RATE)) {
 					res = mip_3dm_gnss_get_base_rate(&_device, base_rate);
@@ -405,6 +403,12 @@ mip_cmd_result MicroStrain::getBaseRate(uint8_t descriptor_set, uint16_t *base_r
 					res = MIP_PX4_ERROR;
 				}
 
+				break;
+			}
+
+		case MIP_GNSS4_DATA_DESC_SET:
+		case MIP_GNSS5_DATA_DESC_SET: {
+				res = MIP_ACK_OK;
 				break;
 			}
 
@@ -681,7 +685,12 @@ mip_cmd_result MicroStrain::configureGnssMessageFormat(uint8_t descriptor_set)
 	uint16_t gnss_decimation = 5;
 
 	if (_param_ms_gnss_rate_hz.get() != 0) {
-		gnss_decimation = base_rate / (uint16_t)_param_ms_gnss_rate_hz.get();
+		const bool using_nova = (_param_ms_data_ctrl.get() == 1);
+
+		gnss_decimation = using_nova
+				  ? 1
+				  : base_rate / (uint16_t)_param_ms_gnss_rate_hz.get();
+
 		PX4_DEBUG("GNSS decimation: %i", gnss_decimation);
 	}
 
@@ -825,78 +834,70 @@ mip_cmd_result MicroStrain::configureGnssAiding()
 		}
 	}
 
-	// Prioritizing setting up multi antenna offsets if it is supported
-	if (supportsDescriptor(MIP_FILTER_CMD_DESC_SET, MIP_CMD_DESC_FILTER_MULTI_ANTENNA_OFFSET)) {
+	// Sets up the GNSS aiding source
+	if (supportsDescriptor(MIP_FILTER_CMD_DESC_SET, MIP_CMD_DESC_FILTER_GNSS_SOURCE_CONTROL)) {
+		if (!mip_cmd_result_is_ack(res = mip_filter_write_gnss_source(&_device,
+						 (mip_filter_gnss_source_command_source)_param_ms_gnss_aid_src_ctrl.get()))) {
+			PX4_ERR("Could not write the gnss aiding source");
+			return res;
+		}
 
-		// Sets up the GNSS aiding source
-		if (supportsDescriptor(MIP_FILTER_CMD_DESC_SET, MIP_CMD_DESC_FILTER_GNSS_SOURCE_CONTROL)) {
-			if (!mip_cmd_result_is_ack(res = mip_filter_write_gnss_source(&_device,
-							 (mip_filter_gnss_source_command_source)_param_ms_gnss_aid_src_ctrl.get()))) {
-				PX4_ERR("Could not write the gnss aiding source");
-				return res;
-			}
+		// Checks if the gnss aiding source is external
+		if (_param_ms_gnss_aid_src_ctrl.get() == MIP_FILTER_GNSS_SOURCE_COMMAND_SOURCE_EXT) {
+			_ext_pos_vel_aiding = true;
 
-			// Checks if the gnss aiding source is external
-			if (_param_ms_gnss_aid_src_ctrl.get() == MIP_FILTER_GNSS_SOURCE_COMMAND_SOURCE_EXT) {
-				_ext_pos_vel_aiding = true;
-
-				// Sets up the aiding frame for the external source
-				if (supportsDescriptor(MIP_AIDING_CMD_DESC_SET, MIP_CMD_DESC_AIDING_FRAME_CONFIG)) {
-					if (!mip_cmd_result_is_ack(res = mip_aiding_write_frame_config(&_device, 1,
-									 MIP_AIDING_FRAME_CONFIG_COMMAND_FORMAT_EULER, false,
-									 gnss_antenna_offset1, &rotation_gnss))) {
-						PX4_ERR("Could not write aiding frame config");
-						return res;
-					}
+			// Sets up the aiding frame for the external source
+			if (supportsDescriptor(MIP_AIDING_CMD_DESC_SET, MIP_CMD_DESC_AIDING_FRAME_CONFIG)) {
+				if (!mip_cmd_result_is_ack(res = mip_aiding_write_frame_config(&_device, 1,
+								 MIP_AIDING_FRAME_CONFIG_COMMAND_FORMAT_EULER, false,
+								 gnss_antenna_offset1, &rotation_gnss))) {
+					PX4_ERR("Could not write aiding frame config");
+					return res;
 				}
 			}
+		}
 
-			else {
-				// Sets up the antenna offsets if the source is internal
-				mip_cmd_result res1 = mip_filter_write_multi_antenna_offset(&_device, 1, gnss_antenna_offset1);
-				mip_cmd_result res2 = mip_filter_write_multi_antenna_offset(&_device, 2, gnss_antenna_offset2);
+		else if (supportsDescriptor(MIP_FILTER_CMD_DESC_SET, MIP_CMD_DESC_FILTER_MULTI_ANTENNA_OFFSET)) {
+			// Sets up the antenna offsets if the source is internal
+			mip_cmd_result res1 = mip_filter_write_multi_antenna_offset(&_device, 1, gnss_antenna_offset1);
+			mip_cmd_result res2 = mip_filter_write_multi_antenna_offset(&_device, 2, gnss_antenna_offset2);
 
-				if (!mip_cmd_result_is_ack(res1)) {
-					PX4_ERR("Could not write multi antenna (1) offsets");
-					return res1;
-				}
+			if (!mip_cmd_result_is_ack(res1)) {
+				PX4_ERR("Could not write multi antenna (1) offsets");
+				return res1;
+			}
 
-				else if (!mip_cmd_result_is_ack(res2)) {
-					PX4_ERR("Could not write multi antenna (2) offsets");
-					return res2;
-				}
+			else if (!mip_cmd_result_is_ack(res2)) {
+				PX4_ERR("Could not write multi antenna (2) offsets");
+				return res2;
 			}
 		}
 
 		else {
-			PX4_ERR("Does not support GNSS source control");
+			PX4_ERR("Multi Antenna Offsets Not Supported");
 			return MIP_PX4_ERROR;
-		}
-
-		// Selectively enables dual antenna heading as an aiding measurement
-		if (!mip_cmd_result_is_ack(res = enableAidingSource(
-				MIP_FILTER_AIDING_MEASUREMENT_ENABLE_COMMAND_AIDING_SOURCE_GNSS_HEADING,
-				_param_ms_int_heading_en.get(),
-				0, MIP_AIDING_FRAME_CONFIG_COMMAND_FORMAT_EULER, nullptr, mip_aiding_frame_config_command_rotation{0},
-				0, _int_aiding, "dual antenna heading"))) {
-			return res;
 		}
 	}
 
-
-
 	// Otherwise sets up the aiding frame
 	else if (supportsDescriptor(MIP_AIDING_CMD_DESC_SET, MIP_CMD_DESC_AIDING_FRAME_CONFIG)) {
-		if (!mip_cmd_result_is_ack(res = mip_aiding_write_frame_config(&_device, 1,
-						 MIP_AIDING_FRAME_CONFIG_COMMAND_FORMAT_EULER, false,
-						 gnss_antenna_offset1, &rotation_gnss))) {
-			PX4_ERR("Could not write aiding frame config");
-			return res;
+
+		if (_param_ms_data_ctrl.get() != 0) {
+			PX4_INFO("Using Receiver Specific GNSS aiding protocol");
+
+			if (!mip_cmd_result_is_ack(res = mip_filter_write_antenna_offset(&_device, gnss_antenna_offset1))) {
+				PX4_ERR("Could not write aiding frame config");
+				return res;
+			}
+
+			_ext_pos_vel_aiding = false;
 		}
 
-		if (_param_ms_gnss_aid_ptcl.get() != 0) {
-			PX4_INFO("Using Receiver Specific GNSS aiding protocol");
-			_ext_pos_vel_aiding = false;
+		else if (!mip_cmd_result_is_ack(res = mip_aiding_write_frame_config(&_device, 1,
+						      MIP_AIDING_FRAME_CONFIG_COMMAND_FORMAT_EULER, false,
+						      gnss_antenna_offset1, &rotation_gnss))) {
+			PX4_ERR("Could not write aiding frame config");
+			return res;
 		}
 	}
 
@@ -998,6 +999,51 @@ mip_cmd_result MicroStrain::writeFilterInitConfig()
 	return res;
 }
 
+mip_cmd_result MicroStrain::configureNova()
+{
+	mip_cmd_result res = MIP_ACK_OK;
+
+	if (_param_ms_data_ctrl.get() != 1) {
+		return res;
+	}
+
+	PX4_INFO("Configuring Nova");
+
+	if (!mip_cmd_result_is_ack(res = mip_3dm_write_gpio_config(&_device, 1, MIP_3DM_GPIO_CONFIG_COMMAND_FEATURE_PPS,
+					 MIP_3DM_GPIO_CONFIG_COMMAND_BEHAVIOR_PPS_INPUT,
+					 MIP_3DM_GPIO_CONFIG_COMMAND_PIN_MODE_NONE))) {
+		MS_PX4_ERROR(res, "Could not write GPIO 1 config");
+		return res;
+	}
+
+	if (!mip_cmd_result_is_ack(res = mip_3dm_write_gpio_config(&_device, 4, MIP_3DM_GPIO_CONFIG_COMMAND_FEATURE_UART,
+					 MIP_3DM_GPIO_CONFIG_COMMAND_BEHAVIOR_UART_PORT3_RX,
+					 MIP_3DM_GPIO_CONFIG_COMMAND_PIN_MODE_NONE))) {
+		MS_PX4_ERROR(res, "Could not write GPIO 4 config");
+		return res;
+	}
+
+	if (!mip_cmd_result_is_ack(res = mip_system_write_interface_control(&_device, MIP_COMMS_INTERFACE_UART_3, MIP_COMMS_PROTOCOL_SBF,
+					 MIP_COMMS_PROTOCOL_NONE))) {
+		MS_PX4_ERROR(res, "Could not configure SBF");
+		return res;
+	}
+
+	if (!mip_cmd_result_is_ack(res = mip_base_write_comm_speed(&_device, 19, 4000000))) {
+		MS_PX4_ERROR(res, "Could not configure baudrate");
+		return res;
+	}
+
+	if (!mip_cmd_result_is_ack(res = mip_3dm_write_pps_source(&_device, MIP_3DM_PPS_SOURCE_COMMAND_SOURCE_GPIO))) {
+		MS_PX4_ERROR(res, "Could not set PPS Source");
+		return res;
+	}
+
+	PX4_INFO("Configured CV7-INS Nova");
+
+	return res;
+}
+
 bool MicroStrain::initializeIns()
 {
 	mip_cmd_result res;
@@ -1039,6 +1085,11 @@ bool MicroStrain::initializeIns()
 	// Connecting using the desired baudrate
 	if (connectAtBaud(DESIRED_BAUDRATE) != PX4_OK) {
 		PX4_ERR("Could not Connect at %lu", DESIRED_BAUDRATE);
+		return false;
+	}
+
+	if (!mip_cmd_result_is_ack(res = configureNova())) {
+		MS_PX4_ERROR(res, "Could not configure Nova");
 		return false;
 	}
 
@@ -1653,7 +1704,7 @@ void MicroStrain::gnssCallback(void *user, const mip_packet_view *packet, mip_ti
 		}
 	}
 
-	bool gnss_valid = pos_llh.updated && dop.updated && vel_ned.updated && gps_leap_sec.updated && fix_info.updated;
+	bool gnss_valid = pos_llh.updated && dop.updated && vel_ned.updated && gps_time.updated && fix_info.updated;
 
 	// Publish only if the corresponding data was extracted from the packet
 	if (gnss_valid) {
