@@ -99,15 +99,15 @@ parameters:
             reboot_required: true
             default: 2
 
-        MS_GNSS_AID_PTCL:
+        MS_DATA_CTRL:
             description:
-                short: MicroStrain GNSS aiding protocol control
+                short: MicroStrain Incoming data control
                 long: |
-                    Select whether using Generic Aiding (0x13), or specific GNSS protocol such as Septentrio Binary Format (SBF) for GNSS aiding messages.
+                    Select incoming data protocol
             type: enum
             values:
-                0: Generic Aiding (0x13) https://s3.amazonaws.com/files.microstrain.com/CV7_INS_Manual/external_content/dcp/Commands/0x13/0x13_links.htm
-                1: Receiver specific protocol (ex Septentrio Binary Format (SBF) or Nova CV7-INS dev kit)
+                0: MicroStrain inertial protocol (MIP)
+                1: Septentrio Binary Format (SBF)
             reboot_required: true
             default: 0
 
