@@ -113,6 +113,8 @@ public:
 
 	static void gnssCallback(void *user, const mip_packet_view *packet, mip_timestamp timestamp);
 
+	static void customCallback(void *user, const mip_packet_view *packet, mip_timestamp timestamp);
+
 private:
 	/** @see ModuleBase */
 	void Run() override;
@@ -225,6 +227,9 @@ private:
 	};
 
 	mip_filter_gnss_dual_antenna_status_data dual_ant_stat{0};
+	double main_ant_llh[3] = {0.0, 0.0, 0.0};
+	double pitch = 0.0;
+	double pitch_uncert = 0.0;
 
 	uint16_t _supported_descriptors[1024] = {0};
 	uint16_t _supported_desc_len = 0;
@@ -288,6 +293,7 @@ private:
 	// Must publish to prevent sensor stale failure (sensors module)
 	uORB::PublicationMulti<sensor_baro_s> _sensor_baro_pub{ORB_ID(sensor_baro)};
 	uORB::PublicationMulti<sensor_gps_s> _sensor_gps_pub[2] {ORB_ID(sensor_gps), ORB_ID(sensor_gps)};
+	uORB::Publication<debug_array_s> _debug_pub {ORB_ID(debug_array)};
 	uORB::Publication<sensor_selection_s> _sensor_selection_pub{ORB_ID(sensor_selection)};
 
 	uORB::Publication<vehicle_global_position_s> _vehicle_global_position_pub;

@@ -406,7 +406,8 @@ mip_cmd_result MicroStrain::getBaseRate(uint8_t descriptor_set, uint16_t *base_r
 				break;
 			}
 
-		case MIP_GNSS4_DATA_DESC_SET: {
+		case MIP_GNSS4_DATA_DESC_SET:
+		case MIP_GNSS5_DATA_DESC_SET: {
 				res = MIP_ACK_OK;
 				break;
 			}
@@ -460,6 +461,7 @@ mip_cmd_result MicroStrain::writeMessageFormat(uint8_t descriptor_set, uint8_t n
 		case MIP_GNSS1_DATA_DESC_SET:
 		case MIP_GNSS2_DATA_DESC_SET:
 		case MIP_GNSS4_DATA_DESC_SET:
+		case MIP_GNSS5_DATA_DESC_SET:
 		case MIP_GNSS_DATA_DESC_SET: {
 				if (supportsDescriptor(descriptor_set, MIP_CMD_DESC_3DM_GNSS_MESSAGE_FORMAT)) {
 					res = mip_3dm_write_gnss_message_format(&_device, num_descriptors, descriptors);
@@ -699,34 +701,36 @@ mip_cmd_result MicroStrain::configureGnssMessageFormat(uint8_t descriptor_set)
 		PX4_DEBUG("GNSS: LLH Pos enabled");
 	}
 
-	if (supportsDescriptor(descriptor_set, MIP_DATA_DESC_GNSS_DOP)
-	    && _param_ms_gnss_rate_hz.get() > 0) {
-		gnss_descriptors[num_gnss_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_GNSS_DOP, gnss_decimation};
-		PX4_DEBUG("GNSS: DOP enabled");
-	}
+	if (descriptor_set != MIP_GNSS5_DATA_DESC_SET) {
+		if (supportsDescriptor(descriptor_set, MIP_DATA_DESC_GNSS_DOP)
+		    && _param_ms_gnss_rate_hz.get() > 0) {
+			gnss_descriptors[num_gnss_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_GNSS_DOP, gnss_decimation};
+			PX4_DEBUG("GNSS: DOP enabled");
+		}
 
-	if (supportsDescriptor(descriptor_set, MIP_DATA_DESC_GNSS_VELOCITY_NED)
-	    && _param_ms_gnss_rate_hz.get() > 0) {
-		gnss_descriptors[num_gnss_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_GNSS_VELOCITY_NED, gnss_decimation};
-		PX4_DEBUG("GNSS: Velocity NED enabled");
-	}
+		if (supportsDescriptor(descriptor_set, MIP_DATA_DESC_GNSS_VELOCITY_NED)
+		    && _param_ms_gnss_rate_hz.get() > 0) {
+			gnss_descriptors[num_gnss_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_GNSS_VELOCITY_NED, gnss_decimation};
+			PX4_DEBUG("GNSS: Velocity NED enabled");
+		}
 
-	if (supportsDescriptor(descriptor_set, MIP_DATA_DESC_SHARED_GPS_TIME)
-	    && _param_ms_gnss_rate_hz.get() > 0) {
-		gnss_descriptors[num_gnss_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_SHARED_GPS_TIME, gnss_decimation};
-		PX4_DEBUG("GNSS: GPS Time enabled");
-	}
+		if (supportsDescriptor(descriptor_set, MIP_DATA_DESC_SHARED_GPS_TIME)
+		    && _param_ms_gnss_rate_hz.get() > 0) {
+			gnss_descriptors[num_gnss_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_SHARED_GPS_TIME, gnss_decimation};
+			PX4_DEBUG("GNSS: GPS Time enabled");
+		}
 
-	if (supportsDescriptor(descriptor_set, MIP_DATA_DESC_GNSS_GPS_LEAP_SECONDS)
-	    && _param_ms_gnss_rate_hz.get() > 0) {
-		gnss_descriptors[num_gnss_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_GNSS_GPS_LEAP_SECONDS, gnss_decimation};
-		PX4_DEBUG("GNSS: GPS Leap seconds enabled");
-	}
+		if (supportsDescriptor(descriptor_set, MIP_DATA_DESC_GNSS_GPS_LEAP_SECONDS)
+		    && _param_ms_gnss_rate_hz.get() > 0) {
+			gnss_descriptors[num_gnss_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_GNSS_GPS_LEAP_SECONDS, gnss_decimation};
+			PX4_DEBUG("GNSS: GPS Leap seconds enabled");
+		}
 
-	if (supportsDescriptor(descriptor_set, MIP_DATA_DESC_GNSS_FIX_INFO)
-	    && _param_ms_gnss_rate_hz.get() > 0) {
-		gnss_descriptors[num_gnss_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_GNSS_FIX_INFO, gnss_decimation};
-		PX4_DEBUG("GNSS: Fix info enabled");
+		if (supportsDescriptor(descriptor_set, MIP_DATA_DESC_GNSS_FIX_INFO)
+		    && _param_ms_gnss_rate_hz.get() > 0) {
+			gnss_descriptors[num_gnss_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_GNSS_FIX_INFO, gnss_decimation};
+			PX4_DEBUG("GNSS: Fix info enabled");
+		}
 	}
 
 	if (supportsDescriptor(descriptor_set, MIP_DATA_DESC_GNSS_HEADING)
@@ -1155,6 +1159,16 @@ bool MicroStrain::initializeIns()
 					       &gnssCallback,
 					       this);
 
+	// Configure the GNSS5 message format based on what descriptors are supported
+	if (!mip_cmd_result_is_ack(res = configureGnssMessageFormat(MIP_GNSS5_DATA_DESC_SET))) {
+		MS_PX4_ERROR(res, "Could not write GNSS5 message format");
+	}
+
+	// Register data callbacks for GNSS5. Uses case 4 in the event we add GNSS3 in the future
+	mip_interface_register_packet_callback(&_device, &_gnss_data_handler[4], MIP_GNSS5_DATA_DESC_SET, false,
+					       &customCallback,
+					       this);
+
 	// Configure the aiding sources based on what the sensor supports
 	if (!mip_cmd_result_is_ack(res = configureAidingSources())) {
 		MS_PX4_ERROR(res, "Could not configure aiding frames!");
@@ -1459,9 +1473,12 @@ void MicroStrain::filterCallback(void *user, const mip_packet_view *packet, mip_
 					      att_quat.sample.q[3]));
 		float yaw = euler_attitude.psi();
 
+		ref->pitch = euler_attitude.theta();
+		ref->pitch_uncert = att_euler_uncert.sample.pitch;
+
 		vp.heading_good_for_control = (!std::isnan(yaw));
 		vp.heading = yaw;
-		vp.heading_var = att_euler_uncert.sample.yaw;
+		vp.heading_var = sq(att_euler_uncert.sample.yaw);
 
 		// vp.ref_alt is supposed to be in MSL, since the filter only estimates ellipsoid, we publish that instead.
 		vp.xy_global = (ref->_pos_ref.isInitialized() == true);
@@ -1707,6 +1724,10 @@ void MicroStrain::gnssCallback(void *user, const mip_packet_view *packet, mip_ti
 	// Publish only if the corresponding data was extracted from the packet
 	if (gnss_valid) {
 
+		ref->main_ant_llh[0] = pos_llh.sample.latitude;
+		ref->main_ant_llh[1] = pos_llh.sample.longitude;
+		ref->main_ant_llh[2] = pos_llh.sample.msl_height;
+
 		sensor_gps_s gps{0};
 		gps.timestamp_sample = t;
 
@@ -1789,6 +1810,65 @@ void MicroStrain::gnssCallback(void *user, const mip_packet_view *packet, mip_ti
 		if (instance == 0) {ref->updateGeoidHeight(_geoid_height, gps.timestamp);}
 
 		ref->_sensor_gps_pub[instance].publish(gps);
+	}
+}
+
+void MicroStrain::customCallback(void *user, const mip_packet_view *packet, mip_timestamp timestamp)
+{
+	MicroStrain *ref = static_cast<MicroStrain *>(user);
+
+	SensorSample<mip_gnss_pos_llh_data> pos_llh;
+	SensorSample<mip_gnss_heading_data> heading;
+
+	debug_array_s debu{0};
+
+	for (mip_field_view field = mip_field_first_from_packet(packet); mip_field_is_valid(&field); mip_field_next(&field)) {
+		switch (mip_field_field_descriptor(&field)) {
+
+		case MIP_DATA_DESC_GNSS_POSITION_LLH:
+			extract_mip_gnss_pos_llh_data_from_field(&field, &pos_llh.sample);
+			pos_llh.updated = true;
+			break;
+
+		case MIP_DATA_DESC_GNSS_HEADING:
+			extract_mip_gnss_heading_data_from_field(&field, &heading.sample);
+			heading.updated = true;
+			break;
+
+		default:
+			break;
+
+		}
+	}
+
+	if (pos_llh.updated) {
+
+		double dlat = math::radians(ref->main_ant_llh[0] - pos_llh.sample.latitude);
+		double dlon = math::radians(ref->main_ant_llh[1] - pos_llh.sample.longitude);
+		double dh = ref->main_ant_llh[2] - pos_llh.sample.msl_height;
+
+		double R = 6378137.0;
+
+		double north = dlat * R;
+		double east = dlon * R * cos(math::radians(ref->main_ant_llh[0]));
+		double up = dh;
+
+		double wrapped_heading = heading.sample.heading;
+
+		if (wrapped_heading > 180) {
+			wrapped_heading -= 360;
+		}
+
+		debu.data[0] = wrapped_heading; //Heading
+		debu.data[1] = ref->pitch; //Pitch
+		debu.data[2] = sqrtf(sq(east) + sq(north) + sq(up)); //Baseline Length
+		debu.data[3] = sq(heading.sample.uncertainty); // Heading Uncert
+		debu.data[4] = sq(ref->pitch_uncert); //Pitch Uncert
+		debu.data[5] = heading.sample.fix_type; // Heading Fix type
+
+		debu.timestamp = hrt_absolute_time();
+
+		ref->_debug_pub.publish(debu);
 	}
 }
 
