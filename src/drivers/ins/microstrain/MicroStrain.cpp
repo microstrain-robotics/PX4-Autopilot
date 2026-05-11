@@ -406,8 +406,7 @@ mip_cmd_result MicroStrain::getBaseRate(uint8_t descriptor_set, uint16_t *base_r
 				break;
 			}
 
-		case MIP_GNSS4_DATA_DESC_SET:
-		case MIP_GNSS5_DATA_DESC_SET: {
+		case MIP_GNSS4_DATA_DESC_SET: {
 				res = MIP_ACK_OK;
 				break;
 			}
@@ -461,7 +460,6 @@ mip_cmd_result MicroStrain::writeMessageFormat(uint8_t descriptor_set, uint8_t n
 		case MIP_GNSS1_DATA_DESC_SET:
 		case MIP_GNSS2_DATA_DESC_SET:
 		case MIP_GNSS4_DATA_DESC_SET:
-		case MIP_GNSS5_DATA_DESC_SET:
 		case MIP_GNSS_DATA_DESC_SET: {
 				if (supportsDescriptor(descriptor_set, MIP_CMD_DESC_3DM_GNSS_MESSAGE_FORMAT)) {
 					res = mip_3dm_write_gnss_message_format(&_device, num_descriptors, descriptors);
@@ -669,7 +667,7 @@ mip_cmd_result MicroStrain::configureGnssMessageFormat(uint8_t descriptor_set)
 	PX4_DEBUG("Configuring GNSS Message Format");
 
 	uint8_t num_gnss_descriptors = 0;
-	mip_descriptor_rate gnss_descriptors[6];
+	mip_descriptor_rate gnss_descriptors[7];
 
 	// Get the base rate
 	uint16_t base_rate;
@@ -729,6 +727,12 @@ mip_cmd_result MicroStrain::configureGnssMessageFormat(uint8_t descriptor_set)
 	    && _param_ms_gnss_rate_hz.get() > 0) {
 		gnss_descriptors[num_gnss_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_GNSS_FIX_INFO, gnss_decimation};
 		PX4_DEBUG("GNSS: Fix info enabled");
+	}
+
+	if (supportsDescriptor(descriptor_set, MIP_DATA_DESC_GNSS_HEADING)
+	    && _param_ms_data_ctrl.get() != 0) {
+		gnss_descriptors[num_gnss_descriptors++] = mip_descriptor_rate { MIP_DATA_DESC_GNSS_HEADING, gnss_decimation};
+		PX4_DEBUG("GNSS: Heading enabled");
 	}
 
 	// Write the settings
@@ -1146,19 +1150,8 @@ bool MicroStrain::initializeIns()
 		MS_PX4_ERROR(res, "Could not write GNSS4 message format");
 	}
 
-	// Register data callbacks for GNSS4. Uses case 3 in the event we add support for  GNSS3 in the future which
-	// would logically take case 2 for clean sequential logic
+	// Register data callbacks for GNSS4
 	mip_interface_register_packet_callback(&_device, &_gnss_data_handler[3], MIP_GNSS4_DATA_DESC_SET, false,
-					       &gnssCallback,
-					       this);
-
-	// Configure the GNSS5 message format based on what descriptors are supported
-	if (!mip_cmd_result_is_ack(res = configureGnssMessageFormat(MIP_GNSS5_DATA_DESC_SET))) {
-		MS_PX4_ERROR(res, "Could not write GNSS5 message format");
-	}
-
-	// Register data callbacks for GNSS5. Uses case 4 in the event we add GNSS3 in the future
-	mip_interface_register_packet_callback(&_device, &_gnss_data_handler[4], MIP_GNSS5_DATA_DESC_SET, false,
 					       &gnssCallback,
 					       this);
 
@@ -1646,10 +1639,9 @@ void MicroStrain::gnssCallback(void *user, const mip_packet_view *packet, mip_ti
 
 	assert((mip_packet_descriptor_set(packet) == MIP_GNSS1_DATA_DESC_SET)
 	       || (mip_packet_descriptor_set(packet) == MIP_GNSS2_DATA_DESC_SET)
-	       || (mip_packet_descriptor_set(packet) == MIP_GNSS4_DATA_DESC_SET)
-	       || (mip_packet_descriptor_set(packet) == MIP_GNSS5_DATA_DESC_SET));
+	       || (mip_packet_descriptor_set(packet) == MIP_GNSS4_DATA_DESC_SET));
 
-	if (mip_packet_descriptor_set(packet) == MIP_GNSS2_DATA_DESC_SET || mip_packet_descriptor_set(packet) == MIP_GNSS5_DATA_DESC_SET) {
+	if (mip_packet_descriptor_set(packet) == MIP_GNSS2_DATA_DESC_SET) {
 		instance = 1;
 	}
 
@@ -1660,6 +1652,7 @@ void MicroStrain::gnssCallback(void *user, const mip_packet_view *packet, mip_ti
 	SensorSample<mip_gnss_gps_leap_seconds_data> gps_leap_sec;
 	SensorSample<mip_gnss_satellite_status_data> sat;
 	SensorSample<mip_gnss_fix_info_data> fix_info;
+	SensorSample<mip_gnss_heading_data> heading;
 
 
 	// Iterate through the packet and extract based on the descriptor present
@@ -1696,6 +1689,11 @@ void MicroStrain::gnssCallback(void *user, const mip_packet_view *packet, mip_ti
 		case MIP_DATA_DESC_GNSS_FIX_INFO:
 			extract_mip_gnss_fix_info_data_from_field(&field, &fix_info.sample);
 			fix_info.updated = true;
+			break;
+
+		case MIP_DATA_DESC_GNSS_HEADING:
+			extract_mip_gnss_heading_data_from_field(&field, &heading.sample);
+			heading.updated = true;
 			break;
 
 		default:
@@ -1776,9 +1774,9 @@ void MicroStrain::gnssCallback(void *user, const mip_packet_view *packet, mip_ti
 
 		gps.satellites_used = fix_info.sample.num_sv;
 
-		gps.heading = ref->dual_ant_stat.heading;
+		gps.heading = heading.updated ? matrix::wrap_pi(math::radians(heading.sample.heading)) : ref->dual_ant_stat.heading;
 		gps.heading_offset = 0;
-		gps.heading_accuracy = 0;
+		gps.heading_accuracy = heading.updated ? sq(math::radians(heading.sample.uncertainty)) : sq(ref->dual_ant_stat.heading_unc);
 
 		gps.rtcm_injection_rate = 0;
 		gps.selected_rtcm_instance = 0;
